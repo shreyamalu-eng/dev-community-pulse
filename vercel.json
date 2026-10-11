@@ -1,0 +1,8 @@
+{
+  "crons": [
+    { "path": "/api/cron", "schedule": "30 0 * * 5" },
+    { "path": "/api/cron?phase=classify", "schedule": "0 1 * * 5" },
+    { "path": "/api/cron?phase=classify", "schedule": "30 1 * * 5" },
+    { "path": "/api/health?deep=1&alert=1", "schedule": "30 2 * * *" }
+  ]
+}
