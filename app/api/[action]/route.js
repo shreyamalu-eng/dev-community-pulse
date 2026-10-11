@@ -4,6 +4,7 @@ import { CATS } from '../../../lib/painpoints';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
+const BATCH = 60; // threads per call: two parallel Gemini requests of 30 fit well inside 60 s
 
 const ok = (data, status = 200) => NextResponse.json(data, { status, headers: { 'Cache-Control': 'no-store' } });
 const fail = (e, status) => ok({ error: String(e?.message || e) }, status || e?.status || 500);
@@ -32,14 +33,22 @@ export async function GET(req, { params }) {
       case 'cron': {
         // Vercel Cron: Friday 06:00 IST fetch, then follow-up labelling passes.
         if (!cronAllowed(req)) return fail('Unauthorized', 401);
+        // Label one small batch, then hand the rest to a fresh invocation so no call hits the time limit.
+        const chain = async (depth) => {
+          if (depth >= 30) return;
+          const next = new URL(`/api/cron?phase=classify&depth=${depth + 1}`, req.url);
+          const ctl = new AbortController(); setTimeout(() => ctl.abort(), 1500);
+          await fetch(next, { headers: process.env.CRON_SECRET ? { authorization: `Bearer ${process.env.CRON_SECRET}` } : {}, signal: ctl.signal }).catch(() => {});
+        };
+        const depth = Number(url.searchParams.get('depth') || 0);
         if (url.searchParams.get('phase') === 'classify') {
-          let last = null;
-          for (let i = 0; i < 3; i++) { last = await classify(150); if (!last.remaining) break; }
+          const last = await classify(BATCH);
+          if (last.remaining && last.labelled) await chain(depth);
           return ok(last);
         }
         const r = await ingest('cron');
-        const c = r.busy ? null : await classify(150);
-        return ok({ ingest: r, classify: c });
+        if (!r.busy) await chain(0);
+        return ok({ ingest: r });
       }
       default:
         return fail('Not found', 404);
@@ -58,7 +67,7 @@ export async function POST(req, { params }) {
         return ok(r);
       }
       case 'classify':
-        return ok(await classify(150));
+        return ok(await classify(BATCH));
       case 'watchlist':
         return ok(await watchlistWrite(body));
       case 'shortlist':
