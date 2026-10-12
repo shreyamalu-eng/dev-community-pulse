@@ -34,7 +34,7 @@ function smoothPath(pts) {
 const niceMax = (m) => { if (m <= 4) return 4; const p = 10 ** Math.floor(Math.log10(m)); const n = m / p; return (n <= 1 ? 1 : n <= 2 ? 2 : n <= 5 ? 5 : 10) * p; };
 
 /* Flowing multi-series line chart with glow, hover read-out and a table fallback */
-export function FlowChart({ series, labels, height = 260, unit = 'threads' }) {
+export function FlowChart({ series, labels, height = 260, unit = 'threads', prefix = 'Week of ' }) {
   const uid = useId().replace(/:/g, '');
   const [hover, setHover] = useState(null);
   const [asTable, setAsTable] = useState(false);
@@ -79,7 +79,7 @@ export function FlowChart({ series, labels, height = 260, unit = 'threads' }) {
             </g>
           ))}
           {labels.map((l, i) => (
-            (W >= 500 || i % 2 === 1 || i === labels.length - 1) && <text key={l} x={x(i)} y={H - 8} textAnchor="middle" fontSize="11" fill={i === labels.length - 1 ? 'var(--ink)' : 'var(--faint)'} style={mono}>{l}</text>
+            (W >= 500 || i % 2 === 1 || i === labels.length - 1) && <text key={l} x={x(i)} y={H - 8} textAnchor={i === 0 ? 'start' : i === labels.length - 1 ? 'end' : 'middle'} fontSize="11" fill={i === labels.length - 1 ? 'var(--ink)' : 'var(--faint)'} style={mono}>{l}</text>
           ))}
           {series.map((s, si) => {
             const pts = s.values.map((v, i) => [x(i), y(v)]);
@@ -104,7 +104,7 @@ export function FlowChart({ series, labels, height = 260, unit = 'threads' }) {
         {hover != null && (
           <div className="pointer-events-none absolute top-2 rounded-[14px] border border-line-strong bg-surface-2 px-3 py-2 text-[12px] shadow-[var(--shadow-float)]"
             style={{ left: `clamp(8px, calc(${(x(hover) / W) * 100}% - 90px), calc(100% - 190px))`, width: 180 }}>
-            <div className="mb-1 font-mono text-[11px] text-muted">Week of {labels[hover]}</div>
+            <div className="mb-1 font-mono text-[11px] text-muted">{prefix}{labels[hover]}</div>
             {series.map((s) => (
               <div key={s.id} className="flex items-center justify-between gap-2"><span className="flex min-w-0 items-center gap-1.5"><i className="h-2 w-2 shrink-0 rounded-full" style={{ background: s.color }} /><span className="truncate">{s.short || s.label}</span></span><b className="font-mono tnum">{s.values[hover]}</b></div>
             ))}
