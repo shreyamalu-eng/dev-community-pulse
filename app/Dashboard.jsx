@@ -1210,11 +1210,13 @@ export default function Dashboard() {
     try {
       let h = null, tries = 0;
       do {
+        const t0 = Date.now();
         h = await api('history', {});
         tries++;
         const failedSrc = Object.entries(h.sources || {}).filter(([, v]) => !v.ok).map(([k]) => SOURCE_NAMES[k]);
-        setStepNote(`History: ${h.filled} of ${h.slices} blocks loaded${h.inserted != null ? ` · +${h.inserted} threads` : ''}${failedSrc.length ? ` · ${failedSrc.join(', ')} busy, will retry` : ''}`);
-        if (failedSrc.length && h.remaining) await new Promise((r) => setTimeout(r, 20000)); // GitHub search allows about 10 calls a minute
+        setStepNote(`History: ${h.filled} of ${h.slices} blocks loaded${h.inserted != null ? ` · +${h.inserted} threads` : ''}${failedSrc.length ? ` · ${failedSrc.join(', ')} busy, will retry` : ''} · about ${Math.max(1, Math.round(h.remaining * 1.1))} min left`);
+        // GitHub search allows about 10 calls a minute without a token, so blocks are spaced a minute apart
+        if (h.remaining) await new Promise((r) => setTimeout(r, Math.max(0, 62000 - (Date.now() - t0))));
       } while (h.remaining > 0 && tries < h.slices * 3);
       setStep(1);
       const { total } = await labelLoop(200);
