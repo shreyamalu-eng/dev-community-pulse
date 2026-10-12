@@ -56,7 +56,7 @@ export function FlowChart({ series, labels, height = 260, unit = 'threads' }) {
             ))}</tbody>
           </table>
         </div>
-        <button onClick={() => setAsTable(false)} className="justify-self-start text-[12px] text-blue-ink underline underline-offset-2">Show as chart</button>
+        <button onClick={() => setAsTable(false)} className="justify-self-start text-[12px] text-link underline underline-offset-2">Show as chart</button>
       </div>
     );
   }
@@ -68,13 +68,13 @@ export function FlowChart({ series, labels, height = 260, unit = 'threads' }) {
             <filter id={`glow${uid}`} x="-10%" y="-30%" width="120%" height="160%"><feGaussianBlur stdDeviation="5" /></filter>
             {series.map((s) => (
               <linearGradient key={s.id} id={`fill${uid}${s.id}`} x1="0" x2="0" y1="0" y2="1">
-                <stop offset="0%" stopColor={s.color} stopOpacity="0.28" /><stop offset="100%" stopColor={s.color} stopOpacity="0" />
+                <stop offset="0%" stopColor={s.color} stopOpacity="0.22" /><stop offset="100%" stopColor={s.color} stopOpacity="0" />
               </linearGradient>
             ))}
           </defs>
           {ticks.map((t) => (
             <g key={t}>
-              <line x1={L} x2={W - R} y1={y(t)} y2={y(t)} stroke="var(--line)" strokeDasharray="3 5" />
+              <line x1={L} x2={W - R} y1={y(t)} y2={y(t)} stroke="var(--line)" strokeDasharray="2 6" />
               <text x={L - 8} y={y(t) + 4} textAnchor="end" fontSize="11" fill="var(--faint)" style={mono}>{t}</text>
             </g>
           ))}
@@ -88,7 +88,6 @@ export function FlowChart({ series, labels, height = 260, unit = 'threads' }) {
             return (
               <g key={s.id}>
                 {si === 0 && <path d={area} fill={`url(#fill${uid}${s.id})`} />}
-                <path d={d} fill="none" stroke={s.color} strokeWidth="6" opacity="0.35" filter={`url(#glow${uid})`} />
                 <path d={d} fill="none" stroke={s.color} strokeWidth={si === 0 ? 3 : 2.2} strokeLinecap="round" pathLength="1" className="draw" style={{ animationDelay: `${si * 120}ms` }} />
                 <circle cx={pts[pts.length - 1][0]} cy={pts[pts.length - 1][1]} r="4.5" fill={s.color} stroke="var(--surface)" strokeWidth="2" />
               </g>
@@ -103,7 +102,7 @@ export function FlowChart({ series, labels, height = 260, unit = 'threads' }) {
           ))}
         </svg>
         {hover != null && (
-          <div className="pointer-events-none absolute top-2 rounded-ctl border border-line bg-surface-2 px-3 py-2 text-[12px] shadow-lg"
+          <div className="pointer-events-none absolute top-2 rounded-[14px] border border-line-strong bg-surface-2 px-3 py-2 text-[12px] shadow-[var(--shadow-float)]"
             style={{ left: `clamp(8px, calc(${(x(hover) / W) * 100}% - 90px), calc(100% - 190px))`, width: 180 }}>
             <div className="mb-1 font-mono text-[11px] text-muted">Week of {labels[hover]}</div>
             {series.map((s) => (
@@ -112,7 +111,7 @@ export function FlowChart({ series, labels, height = 260, unit = 'threads' }) {
           </div>
         )}
       </div>
-      <button onClick={() => setAsTable(true)} className="justify-self-start text-[12px] text-blue-ink underline underline-offset-2">Show as table</button>
+      <button onClick={() => setAsTable(true)} className="justify-self-start text-[12px] text-link underline underline-offset-2">Show as table</button>
     </div>
   );
 }

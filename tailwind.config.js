@@ -1,5 +1,6 @@
 /** @type {import('tailwindcss').Config} */
-const v = (n) => `var(--${n})`;
+// colours are CSS variables; opacity modifiers (border-alert/50) resolve through color-mix
+const v = (n) => ({ opacityValue }) => (opacityValue === undefined || opacityValue === '1' ? `var(--${n})` : `color-mix(in srgb, var(--${n}) calc(${opacityValue} * 100%), transparent)`);
 module.exports = {
   content: ['./app/**/*.{js,jsx}', './lib/**/*.js'],
   theme: {
@@ -12,13 +13,14 @@ module.exports = {
         blue: v('blue'), 'blue-ink': v('blue-ink'), 'blue-soft': v('blue-soft'),
         steady: v('steady'), 'steady-soft': v('steady-soft'), cool: v('cool'), 'cool-soft': v('cool-soft'),
         warn: v('warn'), 'warn-soft': v('warn-soft'), ok: v('ok'), 'ok-soft': v('ok-soft'),
+        alert: v('alert'), 'alert-ink': v('alert-ink'), 'alert-soft': v('alert-soft'), track: v('track'), link: v('link'),
       },
       fontFamily: {
-        display: ['var(--font-display)', 'IBM Plex Sans', 'system-ui', 'sans-serif'],
+        display: ['var(--font-display)', 'Inter', 'system-ui', 'sans-serif'],
         body: ['var(--font-body)', 'system-ui', 'sans-serif'],
         mono: ['var(--font-mono)', 'ui-monospace', 'monospace'],
       },
-      borderRadius: { card: '20px', ctl: '12px' },
+      borderRadius: { card: '16px', ctl: '12px' },
     },
   },
   plugins: [],
