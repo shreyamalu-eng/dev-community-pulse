@@ -42,12 +42,12 @@ The brief asked for topics and keywords to be stored in Supabase. We store them 
 | Variable | Required | Purpose |
 |---|---|---|
 | `DATABASE_URL` | yes | Neon connection string |
-| `GEMINI_API_KEY` | yes | Gemini API key from Google AI Studio |
-| `GEMINI_MODEL` | no | defaults to `gemini-2.5-flash` |
+| `GEMINI_API_KEY` | yes | Gemini key: an OpenRouter key (`sk-or-…`) or a Google AI Studio key (`AIza…`). The app detects which |
+| `OPENROUTER_API_KEY` | no | use instead of `GEMINI_API_KEY` for an OpenRouter key. Calls use Google models only, served only by Google |
+| `GEMINI_MODEL` / `OPENROUTER_MODEL` | no | pin a model; otherwise the newest Gemini Flash in the model list is used |
 | `GITHUB_TOKEN` | no | raises GitHub search rate limits |
 | `STACKEXCHANGE_KEY` | no | raises Stack Exchange quota |
 | `CRON_SECRET` | recommended | only Vercel Cron can start the Friday job; Vercel sends it automatically |
-| `PULSE_WRITE_KEY` | recommended | team password. Reading the brief stays public; running, editing keywords, voting and sending email ask for it once per browser |
 | `RESEND_API_KEY` | no | enables email: the Friday brief and health alerts |
 | `BRIEF_EMAIL` | no | who gets the Friday brief (comma-separated). Falls back to `ALERT_EMAIL` |
 | `ALERT_EMAIL` | no | who gets health-check alerts |
@@ -65,7 +65,7 @@ The brief asked for topics and keywords to be stored in Supabase. We store them 
 All routes live in `app/api/[action]/route.js`.
 
 - Read (public): `GET brief`, `GET watchlist`, `GET shortlist`, `GET health`, `GET delivery`, `GET auth`
-- Change (team password when `PULSE_WRITE_KEY` is set): `POST run`, `POST classify`, `POST summarize`, `POST watchlist`, `POST shortlist`, `POST draft`, `POST email`
+- Change (open to everyone in this trial version): `POST run`, `POST classify`, `POST summarize`, `POST watchlist`, `POST shortlist`, `POST draft`, `POST email`
 - Schedule (`CRON_SECRET` when set): `GET cron`, `GET cron?phase=classify`
 
 ## Proof that the Friday job works
