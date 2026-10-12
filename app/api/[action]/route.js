@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { db, ensureSchema, ingest, classify, briefData, draftBrief, health, alertIfDown, latestCompleteWeek } from '../../../lib/server';
+import { db, ensureSchema, ingest, classify, synthesize, briefData, draftBrief, health, alertIfDown, latestCompleteWeek } from '../../../lib/server';
 import { CATS } from '../../../lib/painpoints';
 
 export const dynamic = 'force-dynamic';
@@ -44,6 +44,7 @@ export async function GET(req, { params }) {
         if (url.searchParams.get('phase') === 'classify') {
           const last = await classify(BATCH);
           if (last.remaining && last.labelled) await chain(depth);
+          else if (!last.remaining) last.synthesis = await synthesize();
           return ok(last);
         }
         const r = await ingest('cron');
@@ -68,6 +69,8 @@ export async function POST(req, { params }) {
       }
       case 'classify':
         return ok(await classify(BATCH));
+      case 'summarize':
+        return ok(await synthesize(body.week));
       case 'watchlist':
         return ok(await watchlistWrite(body));
       case 'shortlist':

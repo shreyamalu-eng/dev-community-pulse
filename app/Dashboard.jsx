@@ -13,12 +13,12 @@ const TONE = {
 };
 const CAT_COLOR = { auto: 'var(--red)', ci: 'var(--orange)', culture: 'var(--blue-ink)', flow: 'var(--steady)' };
 const SERIES_COLORS = ['var(--orange)', 'var(--red-ink)', 'var(--blue-ink)', 'var(--steady)'];
-const VIEWS = [['brief', 'Brief'], ['trends', 'Trends'], ['watchlist', 'Watchlist'], ['system', 'System']];
+const VIEWS = [['brief', 'Brief'], ['trends', 'Trends'], ['watchlist', 'Topics & keywords'], ['system', 'System']];
 const STEPS = [
   ['Fetch', 'Pulling new threads from Hacker News, Stack Overflow, GitHub and Reddit'],
   ['Label', 'Gemini Flash sorts real pain from debugging noise'],
   ['Count', 'Comparing this week with last week and the 4-week normal'],
-  ['Brief', 'Brief updated'],
+  ['Summarise', 'Gemini writes a short, sourced summary for each pain point'],
 ];
 
 /* ── utils ── */
@@ -89,7 +89,7 @@ function TopNav({ view, setView, data, week, setWeek, running, onRun, onReset, p
               </select>
             </>
           )}
-          <Btn onClick={onReset} title="Back to the latest brief with default filters. Your watchlist and votes are kept.">Reset view</Btn>
+          <Btn onClick={onReset} title="Clears filters and returns to the latest brief. Topics, keywords, votes and hidden items are kept.">Reset filters</Btn>
           <Btn kind="primary" onClick={onRun} disabled={running}>
             {running ? <><span className="spin inline-block h-3 w-3 rounded-full border-2 border-white/40 border-t-white" aria-hidden="true" />Running</> : 'Run brief now'}
           </Btn>
@@ -180,13 +180,85 @@ function Hero({ top, data, failed, weekLabel, onEvidence }) {
 }
 
 /* ── things to act on ── */
-function TopCalls({ rows, mode, setMode, shortIds, addShort, openDraft, focusRow }) {
+/* ── evidence helpers ── */
+const diffText = (st) => { const d = st.cur - st.prev; return `${d > 0 ? '+' : ''}${d} vs last week (${st.prev} → ${st.cur})`; };
+function confidence(p, st) {
+  if (st.cur === 0) return { label: 'No data', cls: 'bg-steady-soft text-steady', why: 'No threads this week.' };
+  if (p.voices >= 8 && p.communities >= 2) return { label: 'High confidence', cls: 'bg-ok-soft text-ok', why: `${p.voices} developers across ${p.communities} communities.` };
+  if (p.voices >= 3) return { label: 'Medium confidence', cls: 'bg-blue-soft text-blue-ink', why: `${p.voices} developers${p.communities < 2 ? ', one community only' : ` across ${p.communities} communities`}.` };
+  return { label: 'Low confidence', cls: 'bg-warn-soft text-warn', why: `Only ${p.voices} developer${p.voices === 1 ? '' : 's'} this week. Treat as an early signal.` };
+}
+const Layer = ({ k, tag, children }) => (
+  <div className="grid gap-0.5">
+    <div className="flex items-center gap-1.5"><span className="font-mono text-[10px] uppercase tracking-[.1em] text-faint">{k}</span>{tag && <span className="rounded-md bg-orange-soft px-1.5 text-[10px] text-orange-ink">{tag}</span>}</div>
+    <div className="text-[12.5px] leading-snug text-ink">{children}</div>
+  </div>
+);
+
+/* ── key findings (deterministic, from counts) ── */
+function findings(rows) {
+  const live = rows.filter((r) => r.st.cur > 0);
+  // each tile names a different pain point where possible, so four tiles carry four findings
+  const used = new Set();
+  const pick = (list) => { const r = list.find((x) => !used.has(x.p.id)) || null; if (r) used.add(r.p.id); return r; };
+  const loud = pick([...live].sort((a, b) => b.st.cur - a.st.cur));
+  const rising = pick([...live].filter((r) => r.p.voices >= 2 && r.st.cur - r.st.prev > 0).sort((a, b) => b.st.z - a.st.z));
+  const unsolved = pick([...live].filter((r) => r.st.cur >= 2).sort((a, b) => b.p.unresolved - a.p.unresolved || b.st.cur - a.st.cur));
+  const fresh = pick([...live].filter((r) => r.st.mean === 0).sort((a, b) => b.st.cur - a.st.cur));
+  return { loud, rising, unsolved, fresh };
+}
+function ExecSummary({ rows, data, failed }) {
+  const f = findings(rows);
+  const total = data.counts.pain;
+  const parts = [];
+  if (!total) parts.push('No real pain threads were found this week.');
+  else parts.push(`${total} of ${data.corpus[7]} threads this week describe real developer pain; the rest were how-to questions or noise.`);
+  if (f.loud) parts.push(`The most discussed problem is "${f.loud.p.title}" (${f.loud.st.cur} threads, ${diffText(f.loud.st).replace(/ \(.*\)/, '')}).`);
+  if (f.rising && f.rising !== f.loud) parts.push(`"${f.rising.p.title}" is rising fastest (${f.rising.st.prev} → ${f.rising.st.cur}).`);
+  if (f.unsolved) parts.push(`${f.unsolved.p.unresolved}% of "${f.unsolved.p.title}" threads end without a fix.`);
+  const caveats = [];
+  if (failed.length) caveats.push(`${failed.length} source${failed.length > 1 ? 's' : ''} unavailable, excluded from every week`);
+  if (total && total < 15) caveats.push('low volume, so read changes as early signals');
+  return (
+    <section className="card card-glow grid gap-2 p-5" aria-label="Summary of this week">
+      <Eyebrow>This week in one paragraph · from counts, not AI</Eyebrow>
+      <p className="max-w-[90ch] text-[15px] leading-relaxed">{parts.join(' ')}</p>
+      {caveats.length > 0 && <p className="text-[12.5px] text-warn">Caveat: {caveats.join('; ')}.</p>}
+    </section>
+  );
+}
+function KeyFindings({ rows, onEvidence }) {
+  const f = findings(rows);
+  const tiles = [
+    ['Most discussed', f.loud, (r) => `${r.st.cur} threads · ${r.p.voices} developers`],
+    ['Rising fastest', f.rising, (r) => diffText(r.st)],
+    ['Least solved', f.unsolved, (r) => `${r.p.unresolved}% of ${r.st.cur} threads unsolved`],
+    ['New this week', f.fresh, (r) => `${r.st.cur} threads, none in the 4 weeks before`],
+  ];
+  return (
+    <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+      {tiles.map(([k, r, m]) => (
+        <article key={k} className="card lift grid min-w-0 content-start gap-1.5 p-4">
+          <Eyebrow>{k}</Eyebrow>
+          {r ? (<>
+            <div className="font-display text-[15.5px] font-semibold leading-snug">{r.p.title}</div>
+            <div className="text-[12.5px] text-muted tnum">{m(r)}</div>
+            <button onClick={() => onEvidence(r.p.id)} className="justify-self-start text-[12px] text-blue-ink underline underline-offset-2">See the threads</button>
+          </>) : <div className="text-[13px] text-faint">No other pain point qualifies this week.</div>}
+        </article>
+      ))}
+    </div>
+  );
+}
+
+/* ── things to act on: observation → AI reading → next step, kept visually distinct ── */
+function TopCalls({ rows, mode, setMode, shortIds, addShort, openDraft, focusRow, onSummarize, summarizing }) {
   const top = rows.filter((r) => r.p.rel !== 'outside' && r.st.cur >= MODES[mode].min && r.p.voices >= 2)
     .sort((a, b) => priority(b.p.rel, b.p.unresolved, b.st) - priority(a.p.rel, a.p.unresolved, a.st)).slice(0, 3);
   return (
     <section className="grid min-w-0 content-start gap-3">
       <div className="flex flex-wrap items-baseline justify-between gap-2">
-        <h2 className="font-display text-[20px] font-semibold">Things to act on</h2>
+        <h2 className="font-display text-[20px] font-semibold">What to look into</h2>
         <span className="text-[12px] text-muted">Ranked by volume, growth, how unsolved, and closeness to our product</span>
       </div>
       {top.length === 0 && (
@@ -197,25 +269,41 @@ function TopCalls({ rows, mode, setMode, shortIds, addShort, openDraft, focusRow
       <div className={`grid gap-3 ${top.length >= 3 ? 'md:grid-cols-3' : top.length === 2 ? 'md:grid-cols-2' : ''}`}>
         {top.map(({ p, st }, i) => {
           const inList = shortIds.includes(p.id);
+          const c = confidence(p, st);
+          const ins = p.insight;
           return (
-            <article key={p.id} className="card lift rise flex min-w-0 flex-col gap-2.5 p-4" style={{ animationDelay: `${i * 70}ms` }}>
+            <article key={p.id} className="card lift rise flex min-w-0 flex-col gap-3 p-4" style={{ animationDelay: `${i * 70}ms` }}>
               <div className="flex items-center justify-between gap-2"><span className="grid h-7 w-7 place-items-center rounded-full bg-sunk font-mono text-[12px] text-muted">{i + 1}</span><Pill label={st.label} /></div>
               <h3 className="font-display text-[16.5px] font-semibold leading-snug">{p.title}</h3>
-              <div className="flex items-end justify-between gap-2">
-                <p className="text-[12.5px] text-muted"><b className="mr-1 font-display text-[24px] text-ink tnum">{st.cur}</b>threads<br />{trendWords(st)}</p>
-                <Spark values={p.s} color={TONE[st.label].stroke} w={86} h={30} />
-              </div>
-              <div className="h-1.5 overflow-hidden rounded-full bg-sunk" title={`${p.unresolved}% unsolved`}><div className="h-full rounded-full bg-red" style={{ width: `${p.unresolved}%` }} /></div>
-              <div className="-mt-1 text-[11.5px] text-muted">{p.unresolved}% unsolved</div>
-              <dl className="grid gap-1 text-[12.5px]">
-                <Def t="Hits hardest" d={p.suits} />
-                <Def t="Less relevant for" d={p.notFor} />
-                <Def t="What they try today" d={p.tried} />
-              </dl>
+              <Layer k="What happened">
+                <div className="flex items-end justify-between gap-2">
+                  <span><b className="mr-1 font-display text-[22px] tnum">{st.cur}</b><span className="text-muted">unique threads</span><br /><span className="text-muted tnum">{diffText(st)}</span></span>
+                  <Spark values={p.s} color={TONE[st.label].stroke} w={86} h={30} />
+                </div>
+                <div className="mt-1 text-muted">{p.voices} developers · {p.communities} communit{p.communities === 1 ? 'y' : 'ies'} · {p.unresolved}% unsolved</div>
+                <span className={`mt-1 inline-flex rounded-full px-2 py-[1px] text-[11px] ${c.cls}`} title={c.why}>{c.label}</span>
+              </Layer>
+              {ins ? (<>
+                <Layer k="What developers say" tag={`AI summary of ${ins.threads_used} threads`}>{ins.summary}</Layer>
+                {ins.gap && <Layer k="Gap they describe" tag="AI">{ins.gap}</Layer>}
+                <Layer k="Worth investigating" tag="AI suggestion">{ins.next_step}</Layer>
+              </>) : (
+                <div className="rounded-ctl border border-dashed border-line p-2.5 text-[12px] text-muted">
+                  No AI summary for this week yet. <button disabled={summarizing} onClick={onSummarize} className="text-blue-ink underline underline-offset-2 disabled:opacity-50">{summarizing ? 'Writing…' : 'Summarise the threads'}</button>
+                </div>
+              )}
+              <details className="text-[12px]">
+                <summary className="cursor-pointer text-muted">Team notes <span className="text-faint">(written by your team, not from this week's data)</span></summary>
+                <dl className="mt-1.5 grid gap-1">
+                  <Def t="Hits hardest" d={p.suits} />
+                  <Def t="Less relevant for" d={p.notFor} />
+                  <Def t="Our angle" d={p.angle} />
+                </dl>
+              </details>
               <div className="mt-auto flex flex-wrap gap-2 pt-1">
                 <Btn size="sm" kind={inList ? 'secondary' : 'primary'} onClick={() => addShort(p.id)} disabled={inList}>{inList ? 'On shortlist ✓' : 'Add to shortlist'}</Btn>
                 <Btn size="sm" onClick={() => openDraft([p.id])}>Draft sprint brief</Btn>
-                <Btn size="sm" onClick={() => focusRow(p.id)}>Evidence</Btn>
+                <Btn size="sm" onClick={() => focusRow(p.id)}>See the threads</Btn>
               </div>
             </article>
           );
@@ -361,6 +449,13 @@ function Detail({ p, st, inList, addShort, openDraft, dismiss, weeks }) {
   return (
     <div className="grid gap-5 bg-sunk px-4 py-4 md:grid-cols-[1.3fr_1fr]">
       <div className="grid min-w-0 content-start gap-3">
+        {p.insight && (
+          <div className="grid gap-2 rounded-ctl border border-line bg-surface p-3">
+            <Layer k="What developers say" tag={`AI summary of ${p.insight.threads_used} threads`}>{p.insight.summary}</Layer>
+            {p.insight.gap && <Layer k="Gap they describe" tag="AI">{p.insight.gap}</Layer>}
+            <Layer k="Worth investigating" tag="AI suggestion">{p.insight.next_step}</Layer>
+          </div>
+        )}
         <div>
           <Eyebrow>Source threads</Eyebrow>
           {p.evidence.length === 0 ? <p className="mt-2 text-[13px] text-muted">No threads for this pain point in the last four weeks.</p> : (
@@ -376,9 +471,9 @@ function Detail({ p, st, inList, addShort, openDraft, dismiss, weeks }) {
           )}
         </div>
         <dl className="grid gap-1 text-[13px]">
+          <dt className="font-mono text-[10px] uppercase tracking-[.1em] text-faint">Team notes (not from this week's data)</dt>
           <Def t="Hits hardest" d={p.suits} />
           <Def t="Less relevant for" d={p.notFor} />
-          <Def t="What they try today" d={p.tried} />
           <Def t="Our angle" d={p.angle} />
         </dl>
         <div className="flex flex-wrap gap-2">
@@ -493,13 +588,16 @@ function Leaderboard(props) {
                       <td className="px-4 py-3 align-top font-mono text-[12px] text-faint tnum">{i + 1}</td>
                       <td className="min-w-0 px-2 py-3 align-top">
                         <button onClick={(e) => { e.stopPropagation(); setOpen(isOpen ? null : p.id); }} aria-expanded={isOpen} className="text-left font-medium hover:text-orange-ink">{p.title}</button>
-                        <div className="mt-1 flex flex-wrap items-center gap-2 text-[11.5px] text-muted"><RelTag rel={p.rel} /><span>{CATS[p.cat]}</span><span>{p.voices} developers this week</span>{shortIds.includes(p.id) && <span className="text-orange-ink">On shortlist</span>}</div>
+                        <div className="mt-1 flex flex-wrap items-center gap-2 text-[11.5px] text-muted"><RelTag rel={p.rel} /><span>{CATS[p.cat]}</span><span>{p.voices} developers · {p.communities} communit{p.communities === 1 ? 'y' : 'ies'}</span>{shortIds.includes(p.id) && <span className="text-orange-ink">On shortlist</span>}</div>
                       </td>
                       <td className="px-2 py-3 text-right align-top">
                         <span className="font-display text-[19px] font-semibold tnum">{st.cur}</span>
                         <div className="font-mono text-[11px] text-faint tnum">{cmp === 'wow' ? `was ${st.prev}` : `normal ${st.mean.toFixed(1)}`}</div>
                       </td>
-                      <td className={`px-2 py-3 text-right align-top font-mono text-[13px] tnum ${t.fg}`}>{delta == null ? (st.cur > 0 ? 'new' : '–') : `${sym} ${delta > 0 ? '+' : ''}${delta}%`}</td>
+                      <td className={`px-2 py-3 text-right align-top font-mono text-[13px] tnum ${t.fg}`}>
+                        {cmp === 'wow' ? `${sym || (st.cur - st.prev > 0 ? '▲' : st.cur - st.prev < 0 ? '▼' : '■')} ${st.cur - st.prev > 0 ? '+' : ''}${st.cur - st.prev}` : (delta == null ? (st.cur > 0 ? 'new' : '–') : `${sym} ${delta > 0 ? '+' : ''}${delta}%`)}
+                        {cmp === 'wow' && <div className="text-[11px] opacity-80">{delta == null ? (st.cur > 0 ? 'new' : '') : `${delta > 0 ? '+' : ''}${delta}%`}</div>}
+                      </td>
                       <td className="px-2 py-3 align-top"><Spark values={p.s} color={t.stroke} /></td>
                       <td className="px-2 py-3 align-top">
                         {p.voices < 2 && st.cur > 0 ? <FewVoices n={p.voices} /> : <Pill label={st.label} />}
@@ -556,7 +654,7 @@ function Watchlist({ terms, termsError, reload, toast, candidates }) {
   return (
     <section className="card min-w-0 overflow-hidden">
       <div className="flex flex-wrap items-baseline justify-between gap-2 border-b border-line px-5 py-4">
-        <div><Eyebrow>What Pulse listens for</Eyebrow><h2 className="font-display text-[20px] font-semibold">Watchlist</h2></div>
+        <div><Eyebrow>What Pulse listens for</Eyebrow><h2 className="font-display text-[20px] font-semibold">Topics & keywords</h2></div>
         <span className="text-[12px] text-muted">Saved in Neon · used by every run · no code changes needed</span>
       </div>
       <form onSubmit={submit} className="grid gap-2 px-5 py-4">
@@ -624,7 +722,7 @@ function Watchlist({ terms, termsError, reload, toast, candidates }) {
           <ul className="mt-1.5 flex flex-wrap gap-2">{candidates.map((c) => <li key={c.label}><a className="text-blue-ink hover:underline" href={c.url} target="_blank" rel="noopener noreferrer">{c.label}</a> <span className="text-muted">· {c.n}</span></li>)}</ul>
         </div>
       )}
-      <p className="border-t border-line px-5 py-3 text-[11.5px] text-muted">The number on each term is how many threads it matched in the last 4 weeks. Terms with an orange ring are new and get searched on the next run. Red terms with − are excluded; click any term to switch.</p>
+      <p className="border-t border-line px-5 py-3 text-[11.5px] text-muted">The number on each term is how many threads it matched in the last 4 weeks. Terms with an orange ring are new: the next run searches them across all 8 weeks, so adding a term never shows up as a fake spike. Red terms with − are excluded; click any term to switch. Removing a term stops new matches but keeps past threads.</p>
     </section>
   );
 }
@@ -659,7 +757,8 @@ function SystemView({ data, healthInfo }) {
           <Row k="Neon database" v={healthInfo ? (healthInfo.db?.ok ? `connected · ${healthInfo.db.activeTerms} active terms` : `error: ${healthInfo.db?.error}`) : 'checking…'} bad={healthInfo && !healthInfo.db?.ok} />
           <Row k="Gemini Flash" v={gem ? (gem.ok ? `responding · ${gem.model}` : `error: ${gem.error}`) : healthInfo?.gemini?.configured ? 'key set · not used yet' : 'API key missing'} bad={gem ? !gem.ok : !healthInfo?.gemini?.configured} />
           {SOURCES.map((s) => { const st = lr?.stats?.sources?.[s]; return <Row key={s} k={SOURCE_NAMES[s]} v={st ? (st.ok ? `ok · ${st.fetched} fetched` : `not responding${st.error ? ` (${st.error.slice(0, 60)})` : ''}`) : 'not run yet'} bad={st && !st.ok && st.failed > 0} />; })}
-          <Row k="Scheduled run" v="Fridays 06:00 IST" />
+          <Row k="Scheduled run" v={`Fridays 06:00 IST · last scheduled run: ${data?.lastCron ? `${ist(data.lastCron.started_at)} (${data.lastCron.status})` : 'not yet (first one this Friday)'}`} />
+          <Row k="Delivery" v="The brief is ready on this page by 06:30 IST each Friday" />
           <Row k="Daily health check" v="emails an alert if the database or Gemini fails" />
         </div>
         <details className="rounded-ctl border border-line bg-surface-2 px-3 py-2 text-[13px]" open>
@@ -750,6 +849,8 @@ export default function Dashboard() {
   const titles = Object.fromEntries((data?.pains || []).map((p) => [p.id, p.title]));
   const shortIds = short.items.map((x) => x.id);
 
+  const checked = !!(data && healthInfo) || !!loadError;
+  const aiAt = (data?.pains || []).map((p) => p.insight?.created_at).filter(Boolean).sort().pop();
   const problems = [];
   if (healthInfo && !healthInfo.db?.ok) problems.push('Database not reachable');
   if (failed.length) problems.push(`${failed.map((f) => SOURCE_NAMES[f]).join(', ')} not responding`);
@@ -791,13 +892,22 @@ export default function Dashboard() {
       setStep(1);
       const { total } = await labelLoop();
       setStep(2); setStepNote('');
+      await loadBrief(data?.latest || undefined);
+      setStep(3); setStepNote('');
+      const sum = await api('summarize', {}).catch((e) => ({ error: e.message }));
       const d = await loadBrief(data?.latest || undefined);
       await Promise.all([loadTerms(), d && loadShort(d.week), api('health').then(setHealthInfo).catch(() => {})]);
-      setStep(3);
-      toast(`Brief updated · ${r.inserted} new threads · ${total} labelled${failedNow.length ? ` · ${failedNow.length} source${failedNow.length > 1 ? 's' : ''} down` : ''}`);
+      setStep(4);
+      toast(`Brief updated · ${r.inserted} new threads · ${total} labelled${r.backfilledTerms?.length ? ` · ${r.backfilledTerms.length} new term${r.backfilledTerms.length > 1 ? 's' : ''} back-filled 8 weeks` : ''}${sum.error ? ' · summaries failed' : ''}${failedNow.length ? ` · ${failedNow.length} source${failedNow.length > 1 ? 's' : ''} down` : ''}`);
     } catch (e) {
       toast(e.status === 409 ? e.message : `Run stopped: ${e.message}`);
     } finally { setRunning(false); }
+  };
+  const [summarizing, setSummarizing] = useState(false);
+  const summarize = async () => {
+    setSummarizing(true);
+    try { const r = await api('summarize', { week }); await loadBrief(week); toast(r.error ? `Summary failed: ${r.error}` : `AI summaries written for ${r.written} pain point${r.written === 1 ? '' : 's'}`); }
+    catch (e) { toast(`Summary failed: ${e.message}`); } finally { setSummarizing(false); }
   };
   const continueLabelling = async () => {
     setRunning(true); setStep(1); setStepNote('');
@@ -813,12 +923,17 @@ export default function Dashboard() {
       <main className="mx-auto grid max-w-[1280px] gap-5 px-4 py-6 sm:px-6">
         <div className="flex flex-wrap items-end justify-between gap-3">
           <div className="min-w-0">
-            <h1 className="font-display text-[30px] font-bold leading-tight sm:text-[38px]">{VIEWS.find(([k]) => k === view)[1] === 'Brief' ? 'Friday Morning Brief' : VIEWS.find(([k]) => k === view)[1]}</h1>
-            <p className="mt-1 text-muted">{loadError ? 'Brief unavailable' : data ? `${weekLabel} · for Sumit's Monday sprint planning` : 'Loading the latest brief…'}</p>
+            {view === 'brief' && <Eyebrow>Friday Morning Brief{week ? ` · complete week ${weekLabel}` : ''}</Eyebrow>}
+            <h1 className="mt-1 font-display text-[28px] font-bold leading-tight sm:text-[36px]">{view === 'brief' ? 'What developers are struggling with right now' : VIEWS.find(([k]) => k === view)[1]}</h1>
+            <p className="mt-1 max-w-[80ch] text-muted">
+              {loadError ? 'The brief could not be loaded.' : !data ? 'Loading your latest brief: fetching the most recent report from the database…'
+                : data.totalThreads === 0 ? 'No report yet. Run the first brief to collect eight weeks of history.'
+                : `${data.corpus[7]} threads analysed from ${SOURCES.length - failed.length} of ${SOURCES.length} communities · data collected ${data.lastRun ? ist(data.lastRun.startedAt) : '–'}${aiAt ? ` · AI summaries written ${ist(aiAt)}` : ''}`}
+            </p>
           </div>
           <div className="flex flex-wrap items-center gap-2 text-[12.5px]">
             <button onClick={() => setView('system')} className="press inline-flex items-center gap-1.5 rounded-full border border-line bg-surface px-3 py-1 hover:border-line-strong">
-              <span className={`h-2 w-2 rounded-full ${problems.length ? 'bg-orange' : 'bg-ok'}`} aria-hidden="true" />{problems.length ? problems[0] : 'All systems working'}
+              <span className={`h-2 w-2 rounded-full ${!checked ? 'bg-line-strong' : problems.length ? 'bg-orange' : 'bg-ok'}`} aria-hidden="true" />{!checked ? 'Checking sources…' : problems.length ? problems[0] : 'All sources and services working'}
             </button>
             <span className="text-muted">{data?.lastRun ? `Last run ${ist(data.lastRun.startedAt)}` : data ? 'No runs yet' : ''}</span>
           </div>
@@ -842,21 +957,27 @@ export default function Dashboard() {
         {empty && view !== 'watchlist' && view !== 'system' && <FirstRun onRun={run} running={running} />}
 
         {data && !empty && view === 'brief' && (<>
-          <Hero top={heroTop} data={{ ...data, pains: base.map((r) => ({ ...r.p, s: r.p.s })) }} failed={failed} weekLabel={weekLabel} onEvidence={focusRow} />
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-            {[
-              ['Threads checked', data.corpus[7].toLocaleString('en-IN'), data.corpus[6] ? `${data.corpus[7] >= data.corpus[6] ? '+' : ''}${Math.round(((data.corpus[7] - data.corpus[6]) / data.corpus[6]) * 100)}% vs last week` : 'this week'],
-              ['Real pain points', data.counts.pain.toLocaleString('en-IN'), data.counts.rules ? `${data.counts.rules} labelled by keyword rules` : 'kept after Gemini filtering'],
-              ['Debugging noise removed', data.counts.noise.toLocaleString('en-IN'), 'how-to questions, user error'],
-              ['Sources working', `${SOURCES.length - failed.length} of ${SOURCES.length}`, failed.length ? `${failed.map((f) => SOURCE_NAMES[f]).join(', ')} down` : 'no gaps in this run'],
-            ].map(([l, v, n]) => (
-              <div key={l} className="card lift p-4"><div className="text-[12px] text-muted">{l}</div><div className="mt-1 font-display text-[26px] font-semibold leading-tight tnum">{v}</div><div className="text-[11.5px] text-faint">{n}</div></div>
-            ))}
-          </div>
+          <ExecSummary rows={topPool} data={data} failed={failed} />
+          <KeyFindings rows={topPool} onEvidence={focusRow} />
           <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_360px]">
-            <TopCalls rows={topPool} mode={mode} setMode={setMode} shortIds={shortIds} addShort={addShort} openDraft={(ids) => setDraft({ ids })} focusRow={focusRow} />
+            <TopCalls rows={topPool} mode={mode} setMode={setMode} shortIds={shortIds} addShort={addShort} openDraft={(ids) => setDraft({ ids })} focusRow={focusRow} onSummarize={summarize} summarizing={summarizing} />
             <Shortlist items={short.items} titles={titles} viewer={viewer} setViewer={setViewer} act={shortAct} busy={shortBusy} openDraft={(ids, pack) => setDraft({ ids, pack })} />
           </div>
+          <Hero top={heroTop} data={{ ...data, pains: base.map((r) => ({ ...r.p, s: r.p.s })) }} failed={failed} weekLabel={weekLabel} onEvidence={focusRow} />
+          <section className="grid gap-2">
+            <Eyebrow>Evidence base for this week</Eyebrow>
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+              {[
+                ['Threads checked', data.corpus[7].toLocaleString('en-IN'), data.corpus[6] ? `${data.corpus[7] - data.corpus[6] >= 0 ? '+' : ''}${data.corpus[7] - data.corpus[6]} vs last week` : 'this week'],
+                ['Real pain threads', data.counts.pain.toLocaleString('en-IN'), data.counts.rules ? `${data.counts.rules} labelled by keyword rules` : 'kept after Gemini filtering'],
+                ['Filtered as noise', data.counts.noise.toLocaleString('en-IN'), 'how-to questions, user error'],
+                ['Communities covered', `${SOURCES.length - failed.length} of ${SOURCES.length}`, failed.length ? `${failed.map((f) => SOURCE_NAMES[f]).join(', ')} unavailable` : 'all responded'],
+              ].map(([l, v, n]) => (
+                <div key={l} className="rounded-ctl border border-line bg-surface p-3.5"><div className="text-[12px] text-muted">{l}</div><div className="mt-0.5 font-display text-[22px] font-semibold leading-tight tnum">{v}</div><div className="text-[11.5px] text-faint">{n}</div></div>
+              ))}
+            </div>
+            <p className="text-[11.5px] text-faint">How we count: a thread is one discussion, counted once however many comments it has; cross-posts are merged. Weeks run Friday to Thursday (IST) and only complete weeks are compared.</p>
+          </section>
         </>)}
 
         {data && !empty && view === 'trends' && (<>
