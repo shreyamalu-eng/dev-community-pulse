@@ -84,7 +84,7 @@ export function Capsule({ value, max, c, c2, h = 22, label, delay = 0 }) {
   const short = pct * 100 < 9;
   return (
     <div className="relative w-full overflow-hidden rounded-full bg-track" style={{ height: h }} role="img" aria-label={label || `${value} of ${max}`}>
-      <div className="grow absolute inset-y-0 left-0 flex items-center justify-end rounded-full pr-2"
+      <div className="grow-in absolute inset-y-0 left-0 flex items-center justify-end rounded-full pr-2"
         style={{ width: short ? h : `${pct * 100}%`, minWidth: value > 0 ? h : 0, background: `linear-gradient(90deg, ${c}, ${c2 || c})`, animationDelay: `${delay}ms`, justifyContent: short ? 'center' : 'flex-end', paddingRight: short ? 0 : 8 }}>
         {value > 0 && h >= 14 && <span className="font-mono text-[11px] font-semibold text-[#0A0A14]" style={mono}>{value}</span>}
       </div>
@@ -173,19 +173,20 @@ export const Segments = ({ n, of, color }) => (
 );
 
 /* ── metric tile: label → hero number + unit → mini viz → footer stats ── */
-export function Tile({ n, label, value, unit, tint, viz, foot = [], delta, title }) {
+export function Tile({ n, label, value, unit, tint, viz, foot = [], delta, title, note }) {
   return (
     <article className="card tile rise grid min-w-0 content-between gap-3 p-4" style={{ '--tint': tint }} title={title}>
       <div className="flex items-center justify-between gap-2">
-        <span className="font-mono text-[10.5px] uppercase tracking-[.12em] text-muted">{label}</span>
+        <span className="text-[13px] font-medium text-ink">{label}</span>
         <i className="h-1.5 w-1.5 rounded-full" style={{ background: tint }} aria-hidden="true" />
       </div>
-      <div className="flex items-baseline gap-1.5">
+      <div className="flex flex-wrap items-baseline gap-x-1.5 gap-y-1">
         <span className="font-mono text-[34px] font-semibold leading-none tracking-tight text-ink sm:text-[40px]">{value}</span>
         {unit && <span className="text-[12px] text-faint">{unit}</span>}
         {delta && <span className="ml-auto font-mono text-[11px]" style={{ color: delta.c }}>{delta.t}</span>}
       </div>
-      <div className="min-h-[28px]">{viz}</div>
+      {note && <p className="-mt-1 text-[12px] leading-snug text-muted">{note}</p>}
+      <div className="min-h-[14px]">{viz}</div>
       {foot.length > 0 && (
         <div className="grid border-t border-line pt-2" style={{ gridTemplateColumns: `repeat(${foot.length}, minmax(0,1fr))` }}>
           {foot.map(([k, v], i) => (
