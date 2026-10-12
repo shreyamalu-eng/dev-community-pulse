@@ -2,7 +2,9 @@
 
 A Friday-morning brief for Sumit, the PM at a 15-person code review automation startup. It replaces 90 minutes of manual searching with a ranked view of what developers are complaining about in his problem space, whether each complaint is growing or shrinking compared with last week, and which problems nobody has solved yet.
 
-**Live app:** _add your Vercel URL here_
+**Live app:** https://dev-community-pulse-gamma.vercel.app
+
+**Components Map:** [COMPONENTS.md](COMPONENTS.md) (who does what, step by step, plus the Friday API call flow)
 
 ## What it does
 
@@ -21,7 +23,16 @@ A Friday-morning brief for Sumit, the PM at a 15-person code review automation s
 
 ## Stack
 
-Next.js 14 (App Router) on Vercel · Neon Postgres (`@neondatabase/serverless`) · Gemini Flash REST API · Tailwind CSS · Vercel Cron.
+Next.js 14 (App Router) on Vercel · Neon Postgres (`@neondatabase/serverless`) · Gemini Flash REST API · Resend email · Tailwind CSS · Vercel Cron.
+
+### Why Neon instead of Supabase
+
+The brief asked for topics and keywords to be stored in Supabase. We store them in **Neon**, a deliberate swap made at the start of the build:
+
+- **Same thing underneath.** Supabase's database *is* managed Postgres. Neon is managed Postgres too. The tables (`topic_categories`, `keywords`, `pain_point_taxonomy`, `sources`) and every query are plain SQL and would run unchanged on Supabase: only the connection string in `lib/server.js → db()` changes.
+- **Supabase's free plan pauses projects after 7 days without activity.** Pulse is used once a week, so a paused database would mean the Friday brief could fail exactly when Sumit opens it. Neon's free plan scales to zero and wakes on the first query in under a second, with no manual unpause.
+- **What the requirement is for is still met:** the watchlist is stored in a database, not in code, and is edited from the app (Topics & keywords page) without a redeploy.
+- **Moving to Supabase later** takes about 10 minutes: create a project, run `db/schema.sql` in its SQL editor, set `DATABASE_URL` to its Postgres connection string.
 
 ## Setup
 
@@ -35,7 +46,8 @@ Next.js 14 (App Router) on Vercel · Neon Postgres (`@neondatabase/serverless`) 
 | `GEMINI_MODEL` | no | defaults to `gemini-2.5-flash` |
 | `GITHUB_TOKEN` | no | raises GitHub search rate limits |
 | `STACKEXCHANGE_KEY` | no | raises Stack Exchange quota |
-| `CRON_SECRET` | no | protects the cron endpoints |
+| `CRON_SECRET` | recommended | only Vercel Cron can start the Friday job; Vercel sends it automatically |
+| `PULSE_WRITE_KEY` | recommended | team password. Reading the brief stays public; running, editing keywords, voting and sending email ask for it once per browser |
 | `RESEND_API_KEY` | no | enables email: the Friday brief and health alerts |
 | `BRIEF_EMAIL` | no | who gets the Friday brief (comma-separated). Falls back to `ALERT_EMAIL` |
 | `ALERT_EMAIL` | no | who gets health-check alerts |
@@ -50,9 +62,17 @@ Next.js 14 (App Router) on Vercel · Neon Postgres (`@neondatabase/serverless`) 
 
 ## API
 
-All routes live in `app/api/[action]/route.js`: `GET brief`, `GET|POST watchlist`, `GET|POST shortlist`, `POST run`, `POST classify`, `POST draft`, `GET health`, `GET cron`.
+All routes live in `app/api/[action]/route.js`.
+
+- Read (public): `GET brief`, `GET watchlist`, `GET shortlist`, `GET health`, `GET delivery`, `GET auth`
+- Change (team password when `PULSE_WRITE_KEY` is set): `POST run`, `POST classify`, `POST summarize`, `POST watchlist`, `POST shortlist`, `POST draft`, `POST email`
+- Schedule (`CRON_SECRET` when set): `GET cron`, `GET cron?phase=classify`
+
+## Proof that the Friday job works
+
+The System page shows the last scheduled run and the last *scheduled* email separately from emails sent by hand. Every send is logged in the `deliveries` table with `channel = 'email'` (scheduled) or `'manual'` (button).
 
 ## Known limits
 
-- Reddit often blocks unauthenticated server requests. When it does, the brief shows Reddit as unavailable and compares the other sources like for like.
+- Reddit blocks anonymous requests from cloud servers, so it is read through Reddit's official API (`REDDIT_CLIENT_ID`, `REDDIT_CLIENT_SECRET`). Reddit now approves API access by request; until approved the brief shows Reddit as "not connected" and leaves it out of every week. Discord and X have no free, permitted read access and are shown as not connected.
 - Free Gemini tiers are rate limited. Large first runs label in rounds; the header offers **Finish labelling** if any threads are left.
