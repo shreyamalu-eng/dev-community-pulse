@@ -10,9 +10,18 @@ const ok = (data, status = 200) => NextResponse.json(data, { status, headers: { 
 const fail = (e, status) => ok({ error: String(e?.message || e) }, status || e?.status || 500);
 const userError = (m) => Object.assign(new Error(m), { status: 400 });
 
-function cronAllowed(req) {
+// Write actions (run, label, edit keywords, vote, send email) need the team password once PULSE_WRITE_KEY is set.
+// Reading the brief stays public. Cron calls carry CRON_SECRET instead.
+function writeAllowed(req) {
+  const key = process.env.PULSE_WRITE_KEY;
+  if (!key) return true;
+  return req.headers.get('x-pulse-key') === key || cronAllowed(req, true);
+}
+
+function cronAllowed(req, strict = false) {
   const secret = process.env.CRON_SECRET;
-  return !secret || req.headers.get('authorization') === `Bearer ${secret}`;
+  if (!secret) return !strict;
+  return req.headers.get('authorization') === `Bearer ${secret}`;
 }
 
 export async function GET(req, { params }) {
@@ -32,6 +41,8 @@ export async function GET(req, { params }) {
         if (url.searchParams.get('alert') === '1' && cronAllowed(req)) h.alerted = await alertIfDown(h);
         return ok(h, h.db.ok ? 200 : 503);
       }
+      case 'auth':
+        return ok({ required: !!process.env.PULSE_WRITE_KEY, valid: writeAllowed(req), cronSecret: !!process.env.CRON_SECRET });
       case 'cron': {
         // Vercel Cron: Friday 06:00 IST fetch, then follow-up labelling passes.
         if (!cronAllowed(req)) return fail('Unauthorized', 401);
@@ -65,6 +76,7 @@ export async function GET(req, { params }) {
 export async function POST(req, { params }) {
   let body = {};
   try { body = await req.json(); } catch {}
+  if (!writeAllowed(req)) return ok({ error: 'Team password needed', needKey: true }, 401);
   try {
     switch (params.action) {
       case 'run': {
@@ -77,7 +89,7 @@ export async function POST(req, { params }) {
       case 'summarize':
         return ok(await synthesize(body.week));
       case 'email': {
-        const r = await emailBrief({ week: body.week, force: true, appUrl: new URL('/', req.url).toString() });
+        const r = await emailBrief({ week: body.week, force: true, channel: 'manual', appUrl: new URL('/', req.url).toString() });
         return ok(r, r.sent || r.reason ? 200 : 502);
       }
       case 'watchlist':
