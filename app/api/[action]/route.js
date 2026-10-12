@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { db, ensureSchema, ingest, classify, synthesize, briefData, draftBrief, health, alertIfDown, latestCompleteWeek } from '../../../lib/server';
+import { db, ensureSchema, ingest, classify, synthesize, briefData, draftBrief, health, alertIfDown, latestCompleteWeek, emailBrief, lastDelivery } from '../../../lib/server';
 import { CATS } from '../../../lib/painpoints';
 
 export const dynamic = 'force-dynamic';
@@ -23,6 +23,8 @@ export async function GET(req, { params }) {
         return ok(await briefData(url.searchParams.get('week')));
       case 'watchlist':
         return ok(await watchlist());
+      case 'delivery':
+        return ok(await lastDelivery());
       case 'shortlist':
         return ok(await shortlist(url.searchParams.get('week') || latestCompleteWeek()));
       case 'health': {
@@ -44,7 +46,10 @@ export async function GET(req, { params }) {
         if (url.searchParams.get('phase') === 'classify') {
           const last = await classify(BATCH);
           if (last.remaining && last.labelled) await chain(depth);
-          else if (!last.remaining) last.synthesis = await synthesize();
+          else if (!last.remaining) {
+            last.synthesis = await synthesize();
+            last.email = await emailBrief({ appUrl: new URL('/', req.url).toString() }).catch((e) => ({ sent: false, error: String(e.message || e) }));
+          }
           return ok(last);
         }
         const r = await ingest('cron');
@@ -71,6 +76,10 @@ export async function POST(req, { params }) {
         return ok(await classify(BATCH));
       case 'summarize':
         return ok(await synthesize(body.week));
+      case 'email': {
+        const r = await emailBrief({ week: body.week, force: true, appUrl: new URL('/', req.url).toString() });
+        return ok(r, r.sent || r.reason ? 200 : 502);
+      }
       case 'watchlist':
         return ok(await watchlistWrite(body));
       case 'shortlist':
