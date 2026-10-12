@@ -23,11 +23,38 @@ const range = (iso) => `Fri ${d8(iso)} – Thu ${d8(plus(iso, 6))}`;
 const ist = (ts) => { try { return new Date(ts).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit', hour12: false }) + ' IST'; } catch { return ''; } };
 const ago = (ts) => { const h = (Date.now() - new Date(ts).getTime()) / 36e5; return h < 1 ? `${Math.max(1, Math.round(h * 60))}m ago` : h < 48 ? `${Math.round(h)}h ago` : `${Math.round(h / 24)}d ago`; };
 const sum = (a) => a.reduce((x, y) => x + y, 0);
-async function api(path, body) {
-  const r = await fetch(`/api/${path}`, body ? { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) } : { cache: 'no-store' });
+/* changes (run, edit, vote, send) need the team password; it is asked once and kept in this browser */
+let askTeamKey = null; // set by <TeamKeyDialog>
+async function api(path, body, retried = false) {
+  const headers = { 'Content-Type': 'application/json' };
+  try { const k = localStorage.getItem('pulse-key'); if (k) headers['x-pulse-key'] = k; } catch {}
+  const r = await fetch(`/api/${path}`, body ? { method: 'POST', headers, body: JSON.stringify(body) } : { cache: 'no-store' });
   const j = await r.json().catch(() => ({ error: `Server returned ${r.status}` }));
+  if (r.status === 401 && j.needKey && body && !retried && askTeamKey) {
+    const k = await askTeamKey();
+    if (k) { try { localStorage.setItem('pulse-key', k); } catch {} return api(path, body, true); }
+    throw Object.assign(new Error('Cancelled: changes need the team password'), { status: 401 });
+  }
+  if (r.status === 401 && j.needKey) { try { localStorage.removeItem('pulse-key'); } catch {} throw Object.assign(new Error('Wrong team password. Try again.'), { status: 401 }); }
   if (!r.ok) throw Object.assign(new Error(j.error || `Request failed (${r.status})`), { status: r.status });
   return j;
+}
+function TeamKeyDialog() {
+  const [ask, setAsk] = useState(null); const [val, setVal] = useState('');
+  useEffect(() => { askTeamKey = () => new Promise((resolve) => { setVal(''); setAsk(() => resolve); }); return () => { askTeamKey = null; }; }, []);
+  if (!ask) return null;
+  const done = (v) => { ask(v); setAsk(null); };
+  return (
+    <div className="fixed inset-0 z-50 grid place-items-center bg-black/60 p-4" role="dialog" aria-modal="true" aria-label="Team password">
+      <form onSubmit={(e) => { e.preventDefault(); done(val.trim() || null); }} className="card grid w-full max-w-[380px] gap-3 p-6">
+        <PanelLabel>Team password</PanelLabel>
+        <p className="text-[13px] text-muted">Reading the brief is open to anyone. Changing it (running, editing keywords, voting, sending email) needs the team password. You only enter it once on this browser.</p>
+        <label htmlFor="team-key" className="sr-only">Team password</label>
+        <input id="team-key" type="password" autoFocus value={val} onChange={(e) => setVal(e.target.value)} className="h-10 rounded-full border border-line bg-surface-2 px-4 text-[13px] text-ink" autoComplete="current-password" />
+        <div className="flex gap-2"><Btn type="submit" kind="primary">Unlock</Btn><Btn onClick={() => done(null)}>Cancel</Btn></div>
+      </form>
+    </div>
+  );
 }
 const store = {
   get(k, d) { try { return localStorage.getItem(k) ?? d; } catch { return d; } },
@@ -996,7 +1023,8 @@ function EmailDelivery({ week }) {
         <div className="min-w-0 text-[13px]">
           <div className="font-medium">Email delivery</div>
           <div className={info && !info.configured ? 'text-warn' : 'text-muted'}>{status}</div>
-          {last && <div className="font-mono text-[11px] text-faint">Last email: week of {last.week} · {last.status === 'sent' ? `sent ${ist(last.sent_at)}` : `failed (${(last.detail || '').slice(0, 80)})`}</div>}
+          {last && <div className="font-mono text-[11px] text-faint">Last email: week of {last.week} · {last.channel === 'manual' ? 'sent by hand' : 'scheduled'} · {last.status === 'sent' ? `sent ${ist(last.sent_at)}` : `failed (${(last.detail || '').slice(0, 80)})`}</div>}
+          <div className="font-mono text-[11px] text-faint">Last scheduled email: {info?.lastScheduled ? `week of ${info.lastScheduled.week} · ${info.lastScheduled.status} ${ist(info.lastScheduled.sent_at)}` : 'none yet'}</div>
         </div>
         <Btn onClick={send} disabled={state.busy || !info?.configured} title={info?.configured ? 'Email the brief for the week you are viewing' : 'Set up email in Vercel first'}>
           {state.busy ? 'Sending…' : 'Email this brief now'}
@@ -1010,6 +1038,8 @@ function EmailDelivery({ week }) {
 /* ── system view ── */
 function SystemView({ data, healthInfo, srcSel, toggleSrc }) {
   const lr = data?.lastRun; const gem = lr?.stats?.gemini;
+  const [auth, setAuth] = useState(null);
+  useEffect(() => { api('auth').then(setAuth).catch(() => setAuth(null)); }, []);
   const stages = [
     ['Fetch', `${lr?.stats?.fetched ?? '–'} threads fetched`, !(lr?.stats?.failedSources || []).length],
     ['Label', gem ? (gem.ok ? `Gemini (${gem.model})` : 'keyword rules (Gemini down)') : 'not run yet', gem ? gem.ok : null],
@@ -1033,7 +1063,7 @@ function SystemView({ data, healthInfo, srcSel, toggleSrc }) {
       <div className="grid gap-4 lg:grid-cols-2">
         <EmailDelivery week={data?.week} />
         <Panel n={4} title="Schedule" body="grid content-start gap-3 p-6 text-[13px]">
-          {[['Scheduled run', `Fridays 06:00 IST · last: ${data?.lastCron ? `${ist(data.lastCron.started_at)} (${data.lastCron.status})` : 'not yet (first one this Friday)'}`], ['Next run', `in ${nextRun().left}`], ['Daily health check', 'emails an alert if the database or Gemini fails']].map(([k, v]) => (
+          {[['Scheduled run', `Fridays 06:00 IST · last: ${data?.lastCron ? `${ist(data.lastCron.started_at)} (${data.lastCron.status})` : 'not yet (first one this Friday)'}`], ['Next run', `in ${nextRun().left}`], ['Daily health check', 'emails an alert if the database or Gemini fails'], ['Changes', auth ? (auth.required ? 'locked: team password needed' : 'OPEN: set PULSE_WRITE_KEY in Vercel') : 'checking…'], ['Schedule endpoint', auth ? (auth.cronSecret ? 'locked: only Vercel Cron can start it' : 'OPEN: set CRON_SECRET in Vercel') : 'checking…']].map(([k, v]) => (
             <div key={k} className="flex justify-between gap-3 border-b border-line pb-2 last:border-0"><span>{k}</span><span className="text-right font-mono text-[11.5px] text-muted">{v}</span></div>
           ))}
         </Panel>
@@ -1272,6 +1302,7 @@ export default function Dashboard() {
           <span>Pulse for Sumit's sprint planning</span>
         </footer>
       </main>
+      <TeamKeyDialog />
       {draft && week && <DraftPanel draft={draft} week={week} onClose={() => setDraft(null)} toast={toast} />}
       {toastMsg && (
         <div className="rise fixed left-1/2 z-40 flex max-w-[92vw] -translate-x-1/2 items-center gap-3 rounded-full border border-line-strong bg-surface-2 px-5 py-2.5 text-[13px] text-ink shadow-[var(--shadow-float)]" style={{ bottom: 'calc(16px + env(safe-area-inset-bottom,0px))' }} role="status">
