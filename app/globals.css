@@ -13,32 +13,35 @@
   /* text (all ≥ 4.5:1 on --surface) */
   --ink: #F2F2F7; --muted: #A3A3B8; --faint: #8484A0;
 
-  /* sources: two-stop gradients; the first stop is the solid version */
-  --src-hn: #F59E0B; --src-hn-2: #FB923C;          /* Hacker News: amber → orange */
-  --src-so: #3B82F6; --src-so-2: #22D3EE;          /* Stack Overflow: blue → cyan */
-  --src-gh: #8B5CF6; --src-gh-2: #A78BFA;          /* GitHub Issues: violet */
-  --src-rd: #EC4899; --src-rd-2: #F472B6;          /* Reddit: pink */
+  /* brand primaries: every data colour below is one of these three hues, a tint of one, or grey */
+  --brand-red: #A31B20; --brand-orange: #DF7E0A; --brand-blue: #0A1686;
 
-  /* topics (Pulse's "hook types"): one colour + one glyph each */
-  --cat-auto: #34D399; --cat-auto-2: #5EEAD4;      /* Review automation: green, dot grid */
-  --cat-ci: #22D3EE; --cat-ci-2: #67E8F9;          /* CI/CD automation: cyan, stacked bars */
-  --cat-culture: #C4B5FD; --cat-culture-2: #E9D5FF;/* Review culture: lavender, quote mark */
-  --cat-flow: #A3A3B8; --cat-flow-2: #C8C8D8;      /* Developer workflow: grey, half circles */
+  /* sources: light tints of the brand hues (first stop = solid for strokes) */
+  --src-hn: #F4A53F; --src-hn-2: #FAC77E;          /* Hacker News: orange tint */
+  --src-so: #8E98FF; --src-so-2: #B9C0FF;          /* Stack Overflow: blue tint */
+  --src-gh: #C9CDF5; --src-gh-2: #E4E6FB;          /* GitHub Issues: pale blue */
+  --src-rd: #F0767A; --src-rd-2: #F6A3A6;          /* Reddit: red tint */
+
+  /* topics: deep brand hues, one colour + one glyph each */
+  --cat-auto: #D23A40; --cat-auto-2: #F0767A;      /* Review automation: brand red, dot grid */
+  --cat-ci: #DF7E0A; --cat-ci-2: #F4A53F;          /* CI/CD automation: brand orange, stacked bars */
+  --cat-culture: #4A57E6; --cat-culture-2: #8E98FF;/* Review culture: brand blue, quote mark */
+  --cat-flow: #8A8AA0; --cat-flow-2: #B4B4C6;      /* Developer workflow: grey, half circles */
 
   /* status */
-  --ok: #34D399; --ok-soft: rgba(52, 211, 153, .12);
-  --warn: #FBBF24; --warn-soft: rgba(251, 191, 36, .12);
-  --alert: #FF5A36; --alert-ink: #FF8466; --alert-soft: rgba(255, 90, 54, .13);   /* the single warm accent */
+  --ok: #46C59A; --ok-soft: rgba(70, 197, 154, .12);
+  --warn: #F4A53F; --warn-soft: rgba(223, 126, 10, .14);
+  --alert: #E0474D; --alert-ink: #F0767A; --alert-soft: rgba(163, 27, 32, .24);   /* brand red: alerts, live, rises */
 
   /* trend states */
   --steady: #9A9AB0; --steady-soft: rgba(154, 154, 176, .12);
-  --cool: #60A5FA; --cool-soft: rgba(96, 165, 250, .13);
+  --cool: #8E98FF; --cool-soft: rgba(10, 22, 134, .35);
 
   /* legacy aliases used by older components */
-  --red: var(--alert); --red-ink: var(--alert-ink); --red-soft: var(--alert-soft); --on-red: #0A0A14;
-  --orange: var(--warn); --orange-ink: #FCD34D; --orange-soft: var(--warn-soft);
-  --blue: #3B82F6; --blue-ink: #93B4FF; --blue-soft: rgba(59, 130, 246, .14);
-  --link: #93B4FF;
+  --red: var(--brand-red); --red-ink: var(--alert-ink); --red-soft: var(--alert-soft); --on-red: #FFFFFF;
+  --orange: var(--brand-orange); --orange-ink: #F4A53F; --orange-soft: var(--warn-soft);
+  --blue: var(--brand-blue); --blue-ink: #8E98FF; --blue-soft: rgba(10, 22, 134, .38);
+  --link: #AEB5FF;
 
   --shadow-1: inset 0 1px 0 rgba(255, 255, 255, .04);
   --shadow-float: 0 24px 48px -24px rgba(0, 0, 0, .9);
@@ -77,7 +80,7 @@ h1, h2, h3 { text-wrap: balance; letter-spacing: -0.01em; }
 .lift:hover { border-color: var(--line-strong); }
 
 a:focus-visible, button:focus-visible, select:focus-visible, input:focus-visible, textarea:focus-visible, summary:focus-visible, [tabindex]:focus-visible {
-  outline: 2px solid #3B82F6; outline-offset: 2px; border-radius: 10px;
+  outline: 2px solid var(--brand-orange); outline-offset: 2px; border-radius: 10px;
 }
 select { -webkit-appearance: none; appearance: none; background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='6'><path d='M1 1l4 4 4-4' fill='none' stroke='%23A3A3B8' stroke-width='1.5' stroke-linecap='round'/></svg>"); background-repeat: no-repeat; background-position: right 12px center; padding-right: 30px !important; }
 
