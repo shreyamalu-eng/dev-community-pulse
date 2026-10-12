@@ -727,6 +727,42 @@ function Watchlist({ terms, termsError, reload, toast, candidates }) {
   );
 }
 
+/* ── Friday email delivery ── */
+function EmailDelivery({ week }) {
+  const [info, setInfo] = useState(null);
+  const [state, setState] = useState({ busy: false, msg: '', bad: false });
+  const load = useCallback(() => api('delivery').then(setInfo).catch((e) => setInfo({ error: e.message })), []);
+  useEffect(() => { load(); }, [load]);
+  const send = async () => {
+    setState({ busy: true, msg: 'Sending…', bad: false });
+    try {
+      const r = await api('email', { week });
+      setState({ busy: false, msg: r.sent ? `Sent to ${r.to.length} recipient${r.to.length > 1 ? 's' : ''}: "${r.subject}"` : r.reason || r.error || 'Not sent', bad: !r.sent });
+    } catch (e) { setState({ busy: false, msg: e.message, bad: true }); }
+    load();
+  };
+  const last = info?.last;
+  const status = !info ? 'checking…' : info.error ? `error: ${info.error}`
+    : !info.configured ? (info.hasKey ? 'Resend key set · add BRIEF_EMAIL in Vercel to choose who gets it' : 'Not set up · add RESEND_API_KEY and BRIEF_EMAIL in Vercel')
+    : `Fridays ~06:30 IST to ${info.recipients} recipient${info.recipients > 1 ? 's' : ''}`;
+  return (
+    <div className="rounded-ctl border border-line bg-surface-2 px-3 py-3 text-[13px]">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="min-w-0">
+          <div className="font-medium">Email delivery</div>
+          <div className={info && !info.configured ? 'text-warn' : 'text-muted'}>{status}</div>
+          {last && <div className="text-[12px] text-muted">Last email: week of {last.week} · {last.status === 'sent' ? `sent ${ist(last.sent_at)}` : `failed (${(last.detail || '').slice(0, 80)})`}</div>}
+        </div>
+        <button onClick={send} disabled={state.busy || !info?.configured} title={info?.configured ? 'Email the brief for the week you are viewing' : 'Set up email in Vercel first'}
+          className="press rounded-ctl border border-line-strong px-3 py-1.5 text-[12.5px] font-medium hover:bg-surface disabled:cursor-not-allowed disabled:opacity-50">
+          {state.busy ? 'Sending…' : 'Email this brief now'}
+        </button>
+      </div>
+      {state.msg && !state.busy && <p role="status" className={`mt-2 text-[12px] ${state.bad ? 'text-warn' : 'text-ok'}`}>{state.msg}</p>}
+    </div>
+  );
+}
+
 /* ── system view ── */
 function SystemView({ data, healthInfo }) {
   const lr = data?.lastRun; const gem = lr?.stats?.gemini;
@@ -758,9 +794,9 @@ function SystemView({ data, healthInfo }) {
           <Row k="Gemini Flash" v={gem ? (gem.ok ? `responding · ${gem.model}` : `error: ${gem.error}`) : healthInfo?.gemini?.configured ? 'key set · not used yet' : 'API key missing'} bad={gem ? !gem.ok : !healthInfo?.gemini?.configured} />
           {SOURCES.map((s) => { const st = lr?.stats?.sources?.[s]; return <Row key={s} k={SOURCE_NAMES[s]} v={st ? (st.ok ? `ok · ${st.fetched} fetched` : `not responding${st.error ? ` (${st.error.slice(0, 60)})` : ''}`) : 'not run yet'} bad={st && !st.ok && st.failed > 0} />; })}
           <Row k="Scheduled run" v={`Fridays 06:00 IST · last scheduled run: ${data?.lastCron ? `${ist(data.lastCron.started_at)} (${data.lastCron.status})` : 'not yet (first one this Friday)'}`} />
-          <Row k="Delivery" v="The brief is ready on this page by 06:30 IST each Friday" />
           <Row k="Daily health check" v="emails an alert if the database or Gemini fails" />
         </div>
+        <EmailDelivery week={data?.week} />
         <details className="rounded-ctl border border-line bg-surface-2 px-3 py-2 text-[13px]" open>
           <summary className="cursor-pointer font-medium">How to read the brief</summary>
           <dl className="mt-2 grid gap-1.5">
