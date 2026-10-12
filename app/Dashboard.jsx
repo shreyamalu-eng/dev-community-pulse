@@ -2,6 +2,7 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { CATS, REL, SOURCES, SOURCE_NAMES, MODES, stats, priority, suggest, ambiguity, guessCat } from '../lib/painpoints';
 import { FlowChart } from './visuals';
+import PeriodPicker from './PeriodPicker';
 import { SRC, CAT_STYLE, TREND, healthTone, Glyph, PanelLabel, StatusDot, Tabs, Capsule, ThinDonut, Ring, DotMeter, Spark, Segments, Tile, Scatter, Sankey, Heatmap } from './instruments';
 
 /* ── constants ── */
@@ -20,6 +21,14 @@ const MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct
 const d8 = (iso) => { const d = new Date(iso + 'T00:00:00Z'); return `${d.getUTCDate()} ${MON[d.getUTCMonth()]}`; };
 const plus = (iso, n) => { const d = new Date(iso + 'T00:00:00Z'); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); };
 const range = (iso) => `Fri ${d8(iso)} – Thu ${d8(plus(iso, 6))}`;
+/* words for the period being viewed (week, month or custom range); set once per render by <Dashboard> */
+function mkW(u = 'week') {
+  const per = u === 'period';
+  return { u, us: per ? 'periods' : `${u}s`, this: per ? 'this period' : `this ${u}`, This: per ? 'This period' : `This ${u}`,
+    last: per ? 'the previous period' : `last ${u}`, normal: per ? 'normal' : `4-${u} normal`, every: per ? 'every period' : `every ${u}` };
+}
+let W = mkW('week'); let L = 7; let LABELS = [];
+const qs = (q) => (!q ? '' : `?${new URLSearchParams(Object.entries(q).filter(([, v]) => v)).toString()}`);
 const ist = (ts) => { try { return new Date(ts).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit', hour12: false }) + ' IST'; } catch { return ''; } };
 const ago = (ts) => { const h = (Date.now() - new Date(ts).getTime()) / 36e5; return h < 1 ? `${Math.max(1, Math.round(h * 60))}m ago` : h < 48 ? `${Math.round(h)}h ago` : `${Math.round(h / 24)}d ago`; };
 const sum = (a) => a.reduce((x, y) => x + y, 0);
@@ -121,8 +130,7 @@ function PlatformStrip({ platforms }) {
 }
 
 /* ── navigation ── */
-function TopNav({ view, setView, data, week, setWeek, running, onRun, onReset, problems, checked }) {
-  const weekOpts = data ? [...data.weeks].reverse().slice(0, 4) : [];
+function TopNav({ view, setView, data, running, onRun, onReset, problems, checked, picker }) {
   const status = !checked ? { c: 'var(--faint)', w: 'Checking' } : problems.length ? { c: 'var(--alert)', w: `${problems.length} issue${problems.length > 1 ? 's' : ''}` } : { c: 'var(--ok)', w: 'Live' };
   return (
     <header className="relative z-20 border-b border-line bg-bg/80 backdrop-blur-md sm:sticky" style={{ top: 'env(safe-area-inset-top, 0px)' }}>
@@ -143,15 +151,8 @@ function TopNav({ view, setView, data, week, setWeek, running, onRun, onReset, p
           <button onClick={() => setView('system')} className="press inline-flex h-9 items-center rounded-full border border-line bg-surface px-3" title={problems.length ? problems.join(' · ') : 'All sources and services working'}>
             <StatusDot color={status.c} word={status.w} live={checked && !problems.length} />
           </button>
-          {weekOpts.length > 0 && (
-            <>
-              <label htmlFor="week" className="sr-only">Brief week</label>
-              <select id="week" value={week || ''} onChange={(e) => setWeek(e.target.value)} className="h-9 rounded-full border-[1.5px] border-line-strong bg-transparent px-3.5 font-mono text-[11.5px] text-ink">
-                {weekOpts.map((w, i) => <option key={w} value={w} className="bg-surface">{range(w)}{w === data.latest && i === 0 ? ' · latest' : ''}</option>)}
-              </select>
-            </>
-          )}
-          <Btn onClick={onReset} title="Clears filters and returns to the latest brief. Topics, keywords, votes and hidden items are kept.">Reset filters</Btn>
+          {data && picker}
+          <Btn onClick={onReset} title="Clears filters and returns to the latest weekly brief. Topics, keywords, votes and hidden items are kept.">Reset filters</Btn>
           <Btn kind="primary" onClick={onRun} disabled={running}>
             {running ? <><span className="spin inline-block h-3 w-3 rounded-full border-2 border-[#0A0A14]/30 border-t-[#0A0A14]" aria-hidden="true" />Running</> : 'Run brief now'}
           </Btn>
@@ -187,12 +188,12 @@ function RunTracker({ step, note }) {
 }
 
 /* ── evidence helpers ── */
-const diffText = (st) => { const d = st.cur - st.prev; return `${d > 0 ? '+' : ''}${d} vs last week (${st.prev} → ${st.cur})`; };
+const diffText = (st) => { const d = st.cur - st.prev; return `${d > 0 ? '+' : ''}${d} vs ${W.last} (${st.prev} → ${st.cur})`; };
 function confidence(p, st) {
-  if (st.cur === 0) return { label: 'No data', c: 'var(--steady)', why: 'No threads this week.' };
+  if (st.cur === 0) return { label: 'No data', c: 'var(--steady)', why: `No threads ${W.this}.` };
   if (p.voices >= 8 && p.communities >= 2) return { label: 'High confidence', c: 'var(--ok)', why: `${p.voices} developers across ${p.communities} communities.` };
   if (p.voices >= 3) return { label: 'Medium confidence', c: 'var(--cool)', why: `${p.voices} developers${p.communities < 2 ? ', one community only' : ` across ${p.communities} communities`}.` };
-  return { label: 'Low confidence', c: 'var(--warn)', why: `Only ${p.voices} developer${p.voices === 1 ? '' : 's'} this week. Treat as an early signal.` };
+  return { label: 'Low confidence', c: 'var(--warn)', why: `Only ${p.voices} developer${p.voices === 1 ? '' : 's'} ${W.this}. Treat as an early signal.` };
 }
 const AiTag = ({ children }) => <span className="inline-flex h-5 items-center rounded-full border border-line-strong px-2 font-mono text-[9.5px] uppercase tracking-[.08em] text-muted">✦ {children}</span>;
 const Layer = ({ k, tag, children }) => (
@@ -216,7 +217,7 @@ function findings(rows) {
 
 /* ── KPI tile row: four numbers, each with a plain-language title ── */
 function KpiRow({ rows, data }) {
-  const c7 = data.corpus[7], c6 = data.corpus[6];
+  const c7 = data.corpus[L], c6 = data.corpus[L - 1];
   const rising = rows.filter((r) => r.st.label === 'Spike' || r.st.label === 'Climbing');
   const spikes = rows.filter((r) => r.st.label === 'Spike').length;
   const curTot = sum(rows.map((r) => r.st.cur));
@@ -225,15 +226,15 @@ function KpiRow({ rows, data }) {
   const d = c7 - c6;
   return (
     <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-      <Tile label="Threads read this week" value={c7.toLocaleString('en-IN')} unit="threads" tint="var(--cool)"
-        delta={c6 ? { t: `${d >= 0 ? '+' : ''}${d} vs last week`, c: 'var(--muted)' } : null}
+      <Tile label={`Threads read ${W.this}`} value={c7.toLocaleString('en-IN')} unit="threads" tint="var(--cool)"
+        delta={c6 ? { t: `${d >= 0 ? '+' : ''}${d} vs ${W.last}`, c: 'var(--muted)' } : null}
         note="Every discussion that mentioned a tracked keyword."
         viz={<Spark values={data.corpus} color="var(--cool)" w={220} h={30} />} />
       <Tile label="Genuine complaints" value={data.counts.pain} unit={`of ${c7}`} tint="var(--brand-orange)"
         note={`${share}% describe a real problem. The rest were how-to questions or off-topic.`}
         viz={<Capsule value={share} max={100} c="#DF7E0A" c2="#F4A53F" h={14} label={`${share}% of threads are genuine complaints`} />} />
       <Tile label="Problems getting worse" value={rising.length} unit={`of ${rows.length} tracked`} tint="var(--alert)"
-        note={rising.length ? `${spikes} spiking well above normal, ${rising.length - spikes} climbing.` : 'Nothing is above its usual level this week.'}
+        note={rising.length ? `${spikes} spiking well above normal, ${rising.length - spikes} climbing.` : `Nothing is above its usual level ${W.this}.`}
         viz={<Segments n={rising.length} of={rows.length} color="var(--alert)" />} />
       <Tile label="Still unsolved" value={unsolved} unit="%" tint="#F0767A"
         note="Share of complaints with no accepted answer, fix or closed issue."
@@ -246,21 +247,21 @@ function ExecSummary({ rows, data, failed, onEvidence }) {
   const f = findings(rows);
   const total = data.counts.pain;
   const parts = [];
-  if (!total) parts.push('No genuine complaints were found this week.');
-  else parts.push(`${total} of ${data.corpus[7]} threads this week are genuine complaints.`);
-  if (f.loud) parts.push(`The biggest is "${f.loud.p.title}" with ${f.loud.st.cur} threads (${f.loud.st.prev} last week).`);
+  if (!total) parts.push(`No genuine complaints were found ${W.this}.`);
+  else parts.push(`${total} of ${data.corpus[L]} threads ${W.this} are genuine complaints.`);
+  if (f.loud) parts.push(`The biggest is "${f.loud.p.title}" with ${f.loud.st.cur} threads (${f.loud.st.prev} ${W.last}).`);
   if (f.rising && f.rising !== f.loud) parts.push(`"${f.rising.p.title}" is growing fastest.`);
   const caveats = [];
-  if (failed.length) caveats.push(`${failed.map((x) => SOURCE_NAMES[x]).join(', ')} did not respond, so it is left out of every week`);
+  if (failed.length) caveats.push(`${failed.map((x) => SOURCE_NAMES[x]).join(', ')} did not respond, so it is left out of ${W.every}`);
   if (total && total < 15) caveats.push('volumes are small, so treat changes as early signals');
   const facts = [
     ['Biggest', f.loud, (r) => `${r.st.cur} threads · ${r.p.voices} people`],
     ['Growing fastest', f.rising, (r) => `${r.st.prev} → ${r.st.cur} threads`],
     ['Least solved', f.unsolved, (r) => `${r.p.unresolved}% have no fix`],
-    ['New this week', f.fresh, (r) => `${r.st.cur} threads, none before`],
+    [`New ${W.this}`, f.fresh, (r) => `${r.st.cur} threads, none before`],
   ];
   return (
-    <Panel n={1} title="This week in brief" body="grid gap-5 p-6">
+    <Panel n={1} title={`${W.This} in brief`} body="grid gap-5 p-6">
       <p className="max-w-[90ch] text-[15px] leading-relaxed">{parts.join(' ')}</p>
       {caveats.length > 0 && <StatusDot color="var(--warn)" word={`Note: ${caveats.join('; ')}`} />}
       <div className="grid gap-4 border-t border-line pt-4 sm:grid-cols-2 xl:grid-cols-4">
@@ -270,7 +271,7 @@ function ExecSummary({ rows, data, failed, onEvidence }) {
             {r ? (<>
               <button onClick={() => onEvidence(r.p.id)} className="text-left text-[13.5px] font-semibold leading-snug hover:underline">{r.p.title}</button>
               <div className="font-mono text-[11.5px] text-muted">{m(r)}</div>
-            </>) : <div className="text-[12.5px] text-faint">Nothing qualifies this week.</div>}
+            </>) : <div className="text-[12.5px] text-faint">Nothing qualifies {W.this}.</div>}
           </div>
         ))}
       </div>
@@ -286,7 +287,7 @@ function TopCalls({ rows, mode, setMode, shortItems, addShort, openDraft, focusR
     <section className="grid min-w-0 content-start gap-3">
       <PanelLabel n={4} right={<span className="hidden text-[11.5px] text-faint sm:inline">Ranked by size, growth, how unsolved, and fit with our product</span>}>Act on these first</PanelLabel>
       {top.length === 0 && (
-        <div className="card p-5 text-[13px] text-muted">Nothing meets the "{MODES[mode].label}" evidence level this week.{' '}
+        <div className="card p-5 text-[13px] text-muted">Nothing meets the "{MODES[mode].label}" evidence level {W.this}.{' '}
           {mode !== 'exploratory' && <button onClick={() => setMode('exploratory')} className="text-link underline underline-offset-2">Show early signals</button>}
         </div>
       )}
@@ -309,8 +310,8 @@ function TopCalls({ rows, mode, setMode, shortItems, addShort, openDraft, focusR
                 <h3 className="text-[17px] font-semibold leading-snug">{p.title}</h3>
                 <div className="flex items-end justify-between gap-3">
                   <div>
-                    <div className="flex items-baseline gap-1.5"><b className="font-mono text-[40px] font-semibold leading-none">{st.cur}</b><span className="text-[12px] text-faint">threads this week</span></div>
-                    <div className="mt-1 font-mono text-[12px]" style={{ color: t.ink }}>{st.cur - st.prev > 0 ? '+' : ''}{st.cur - st.prev} vs last week ({st.prev})</div>
+                    <div className="flex items-baseline gap-1.5"><b className="font-mono text-[40px] font-semibold leading-none">{st.cur}</b><span className="text-[12px] text-faint">threads {W.this}</span></div>
+                    <div className="mt-1 font-mono text-[12px]" style={{ color: t.ink }}>{st.cur - st.prev > 0 ? '+' : ''}{st.cur - st.prev} vs {W.last} ({st.prev})</div>
                   </div>
                   <Spark values={p.s} color={t.c} w={120} h={40} />
                 </div>
@@ -336,7 +337,7 @@ function TopCalls({ rows, mode, setMode, shortItems, addShort, openDraft, focusR
                   <div className="text-[12.5px] text-muted">No summary yet. <button disabled={summarizing} onClick={onSummarize} className="text-link underline underline-offset-2 disabled:opacity-50">{summarizing ? 'Writing…' : 'Summarise the threads'}</button></div>
                 )}
                 <details className="text-[12px]">
-                  <summary className="cursor-pointer text-muted">Team notes <span className="text-faint">(written by us, not from this week's data)</span></summary>
+                  <summary className="cursor-pointer text-muted">Team notes <span className="text-faint">(written by us, not from {W.this}'s data)</span></summary>
                   <dl className="mt-1.5 grid gap-1"><Def t="Hits hardest" d={p.suits} /><Def t="Less relevant for" d={p.notFor} /><Def t="Our angle" d={p.angle} /></dl>
                 </details>
                 <div className="flex flex-wrap gap-2 pt-1">
@@ -354,7 +355,7 @@ function TopCalls({ rows, mode, setMode, shortItems, addShort, openDraft, focusR
 }
 
 /* ── team vote: everyone sees the tally; Sumit makes the call ── */
-function Shortlist({ items, titles, viewer, setViewer, act, openDraft, busy }) {
+function Shortlist({ items, titles, viewer, setViewer, act, openDraft, busy, weekNote }) {
   const isOrg = viewer === 'sumit';
   const tally = (x) => { const v = Object.values(x.votes || {}); return { up: v.filter((y) => y === 'up').length, down: v.filter((y) => y === 'down').length }; };
   const ranked = [...items].sort((a, b) => (tally(b).up - tally(b).down) - (tally(a).up - tally(a).down));
@@ -363,6 +364,7 @@ function Shortlist({ items, titles, viewer, setViewer, act, openDraft, busy }) {
   const awaiting = items.filter((x) => !x.decision).length;
   return (
     <Panel n={5} title="Team vote" body="grid content-start gap-4 p-5">
+      {weekNote && <p className="text-[11.5px] text-faint">{weekNote}</p>}
       <div className="grid grid-cols-3 gap-2 text-center">
         {[['In sprint', inSprint.length, 'var(--ok)'], ['Awaiting Sumit', awaiting, 'var(--warn)'], ['Parked', items.filter((x) => x.decision === 'later').length, 'var(--faint)']].map(([k, v, c]) => (
           <div key={k} className="rounded-[12px] border border-line bg-surface-2 py-2"><div className="font-mono text-[24px] font-semibold leading-none" style={{ color: v ? c : 'var(--faint)' }}>{v}</div><div className="mt-1 text-[10.5px] text-faint">{k}</div></div>
@@ -423,17 +425,17 @@ function Shortlist({ items, titles, viewer, setViewer, act, openDraft, busy }) {
 }
 
 /* ── sprint brief drawer ── */
-function DraftPanel({ draft, week, onClose, toast }) {
+function DraftPanel({ draft, week, period, onClose, toast }) {
   const [state, setState] = useState({ loading: true });
   const ref = useRef(null);
   useEffect(() => {
     let live = true;
     setState({ loading: true });
-    api('draft', { ids: draft.ids, week }).then((r) => live && setState({ loading: false, ...r })).catch((e) => live && setState({ loading: false, error: e.message }));
+    api('draft', { ids: draft.ids, week, period }).then((r) => live && setState({ loading: false, ...r })).catch((e) => live && setState({ loading: false, error: e.message }));
     return () => { live = false; };
-  }, [draft, week]);
+  }, [draft, week, JSON.stringify(period)]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { const k = (e) => e.key === 'Escape' && onClose(); window.addEventListener('keydown', k); return () => window.removeEventListener('keydown', k); }, [onClose]);
-  const header = draft.pack ? `Monday sprint pack: ${draft.ids.length} item${draft.ids.length > 1 ? 's' : ''}\nDeveloper Community Pulse, week of ${range(week)}\nDecided by Sumit after team votes.\n\n` : `Developer Community Pulse, week of ${range(week)}\n\n`;
+  const header = draft.pack ? `Monday sprint pack: ${draft.ids.length} item${draft.ids.length > 1 ? 's' : ''}\nDeveloper Community Pulse, ${period?.grain && period.grain !== 'week' ? period.label : `week of ${range(week)}`}\nDecided by Sumit after team votes.\n\n` : `Developer Community Pulse, ${period?.grain && period.grain !== 'week' ? period.label : `week of ${range(week)}`}\n\n`;
   const copy = async () => {
     const cur = ref.current ? ref.current.value : '';
     try { await navigator.clipboard.writeText(cur); toast(draft.pack ? 'Monday pack copied' : 'Sprint brief copied'); }
@@ -448,7 +450,7 @@ function DraftPanel({ draft, week, onClose, toast }) {
         </div>
         {state.loading ? (
           <div className="grid gap-2" aria-live="polite">
-            <StatusDot color="var(--alert)" word="Thinking… Gemini Flash is writing from this week's numbers" live />
+            <StatusDot color="var(--alert)" word={`Thinking… Gemini Flash is writing from ${W.this}'s numbers`} live />
             {[90, 70, 82, 60, 76].map((w, i) => <div key={i} className="h-3 animate-pulse rounded-full bg-surface-2" style={{ width: `${w}%` }} />)}
           </div>
         ) : state.error ? (
@@ -472,7 +474,7 @@ function LoudestBars({ rows, onPick }) {
   const live = [...rows].filter((r) => r.st.cur > 0).sort((a, b) => b.st.cur - a.st.cur).slice(0, 7);
   const max = Math.max(4, ...live.map((r) => r.st.cur));
   return (
-    <Panel n={2} title="Most talked-about problems" right={<span className="font-mono text-[10.5px] text-faint">threads this week</span>} body="grid content-start gap-4 p-6">
+    <Panel n={2} title="Most talked-about problems" right={<span className="font-mono text-[10.5px] text-faint">threads {W.this}</span>} body="grid content-start gap-4 p-6">
       {live.length ? (<>
         <ul className="grid gap-3">
           {live.map((r, i) => { const t = CAT_STYLE[r.p.cat]; const d = r.st.cur - r.st.prev; return (
@@ -486,7 +488,7 @@ function LoudestBars({ rows, onPick }) {
           ); })}
         </ul>
         <div className="flex flex-wrap gap-3 border-t border-line pt-3">{Object.keys(CATS).map((c) => <span key={c} className="inline-flex items-center gap-1.5 text-[11px] text-muted"><Glyph kind={CAT_STYLE[c].glyph} color={CAT_STYLE[c].c2} size={10} />{CATS[c]}</span>)}</div>
-      </>) : <p className="text-[13px] text-muted">No complaints this week yet.</p>}
+      </>) : <p className="text-[13px] text-muted">No complaints {W.this} yet.</p>}
     </Panel>
   );
 }
@@ -499,7 +501,7 @@ function ActScatter({ rows, onPick }) {
     <Panel n={3} title="Spiking vs. normal" right={<span className="font-mono text-[10.5px] text-faint">click a dot</span>} body="grid content-start gap-3 p-6">
       <div className="flex flex-wrap items-baseline gap-2"><span className="font-mono text-[36px] font-semibold leading-none" style={{ color: hot ? 'var(--alert-ink)' : undefined }}>{hot}</span><span className="text-[13px] text-muted">{hot === 1 ? 'problem is' : 'problems are'} both big and unusual</span></div>
       <p className="text-[12px] text-faint">Further right = more threads. Higher = further above its usual weekly level.</p>
-      {pts.length ? <Scatter points={pts} xLabel="Threads this week" yLabel="Above normal" onPick={onPick} /> : <p className="text-[13px] text-muted">No complaints in the last five weeks.</p>}
+      {pts.length ? <Scatter points={pts} xLabel={`Threads ${W.this}`} yLabel="Above normal" onPick={onPick} /> : <p className="text-[13px] text-muted">No complaints in the last five {W.us}.</p>}
     </Panel>
   );
 }
@@ -519,7 +521,7 @@ function TopicRings({ rows }) {
             </div>
           ))}
         </div>
-      ) : <p className="text-[13px] text-muted">No complaints this week yet.</p>}
+      ) : <p className="text-[13px] text-muted">No complaints {W.this} yet.</p>}
     </Panel>
   );
 }
@@ -529,13 +531,13 @@ function TalkMap({ rows, failed, platforms }) {
   const srcs = SOURCES.filter((s) => !failed.includes(s) && platforms.find((p) => p.id === s)?.state !== 'off');
   const data = Object.keys(CATS).map((c) => {
     const mine = rows.filter((r) => r.p.cat === c);
-    const parts = srcs.map((s) => ({ s, v: sum(mine.map((r) => r.p.bySource[s]?.[7] || 0)) }));
+    const parts = srcs.map((s) => ({ s, v: sum(mine.map((r) => r.p.bySource[s]?.[L] || 0)) }));
     const spiking = mine.filter((r) => r.st.label === 'Spike' || r.st.label === 'Climbing').length;
     return { c, parts, total: sum(parts.map((x) => x.v)), spiking };
   }).sort((a, b) => b.total - a.total);
   const max = Math.max(1, ...data.map((d) => d.total));
   return (
-    <Panel n={8} title="Who is talking about what" right={<span className="font-mono text-[10.5px] text-faint">threads this week, by platform</span>} body="grid content-start gap-4 p-6">
+    <Panel n={8} title="Who is talking about what" right={<span className="font-mono text-[10.5px] text-faint">threads {W.this}, by platform</span>} body="grid content-start gap-4 p-6">
       <ul className="grid gap-4">
         {data.map((d) => (
           <li key={d.c} className="grid gap-1.5 sm:grid-cols-[200px_1fr_120px] sm:items-center sm:gap-4">
@@ -556,13 +558,14 @@ function TalkMap({ rows, failed, platforms }) {
 
 function SourceMix({ rows, failed, platforms }) {
   const [span, setSpan] = useState('week');
-  const idx = span === 'week' ? [7] : span === '4w' ? [4, 5, 6, 7] : [0, 1, 2, 3, 4, 5, 6, 7];
+  const all = LABELS.map((_, i) => i);
+  const idx = span === 'week' ? [L] : span === '4w' ? all.slice(-4) : all;
   const state = (s) => platforms.find((p) => p.id === s)?.state;
   const parts = SOURCES.map((s) => ({ id: s, label: SOURCE_NAMES[s], c: SRC[s].c, c2: SRC[s].c2, value: failed.includes(s) || state(s) === 'off' ? 0 : sum(rows.map((r) => sum(idx.map((i) => r.p.bySource[s]?.[i] || 0)))) }));
   const total = sum(parts.map((p) => p.value));
   return (
     <Panel n={7} title="By platform" body="grid content-start gap-4 p-6">
-      <Tabs value={span} onChange={setSpan} label="Time span" options={[['week', 'Week'], ['4w', '4 weeks'], ['8w', '8 weeks']]} />
+      <Tabs value={span} onChange={setSpan} label="Time span" options={[['week', W.u === 'period' ? 'This period' : W.u[0].toUpperCase() + W.u.slice(1)], ['4w', `Last 4 ${W.us}`], ['8w', `All ${LABELS.length} ${W.us}`]]} />
       <div className="grid items-center justify-items-center gap-4 sm:grid-cols-[auto_1fr] sm:justify-items-start">
         <ThinDonut parts={parts} total={total} size={156} centerLabel="complaints" />
         <ul className="grid w-full gap-2">
@@ -642,7 +645,7 @@ function TrendChart({ rows, weeks }) {
   const toggle = (id) => setPicked((cur) => { const base = cur || ids; return base.includes(id) ? base.filter((x) => x !== id) : [...base, id].slice(-4); });
   const series = ids.map((id, i) => { const r = rows.find((x) => x.p.id === id); return r && { id, label: r.p.title, short: r.p.title.split(' ').slice(0, 4).join(' '), values: r.p.s, color: SERIES_COLORS[i % 4] }; }).filter(Boolean);
   return (
-    <Panel n={1} title="Eight-week view" right={<span className="hidden text-[11.5px] text-faint sm:inline">Pick up to 4 · hover a week for exact counts</span>} body="grid min-w-0 gap-4 p-6">
+    <Panel n={1} title={`${LABELS.length}-${W.u} view`} right={<span className="hidden text-[11.5px] text-faint sm:inline">Pick up to 4 · hover a {W.u} for exact counts</span>} body="grid min-w-0 gap-4 p-6">
       <h2 className="text-[20px] font-semibold">How the conversation is moving</h2>
       <div className="flex flex-wrap gap-1.5" role="group" aria-label="Pain points shown on chart">
         {ranked.map((r) => { const on = ids.includes(r.p.id); const i = ids.indexOf(r.p.id); return (
@@ -651,7 +654,7 @@ function TrendChart({ rows, weeks }) {
           </button>
         ); })}
       </div>
-      {series.length ? <FlowChart series={series} labels={weeks.map(d8)} /> : <p className="py-10 text-center text-muted">Pick a pain point above to plot it.</p>}
+      {series.length ? <FlowChart series={series} labels={LABELS} prefix={W.u === 'week' ? 'Week of ' : ''} /> : <p className="py-10 text-center text-muted">Pick a pain point above to plot it.</p>}
     </Panel>
   );
 }
@@ -659,8 +662,8 @@ function TrendChart({ rows, weeks }) {
 function ActivityHeatmap({ rows, weeks, onPick }) {
   const list = [...rows].sort((a, b) => sum(b.p.s) - sum(a.p.s));
   return (
-    <Panel n={2} title="Activity · 8 weeks" right={<span className="hidden font-mono text-[10.5px] text-faint sm:inline">colour = topic · intensity = threads</span>} body="grid min-w-0 gap-4 p-6">
-      <Heatmap rows={list.map((r) => ({ id: r.p.id, label: r.p.title, values: r.p.s, c: CAT_STYLE[r.p.cat].c, glyph: CAT_STYLE[r.p.cat].glyph }))} cols={weeks.map(d8)} onPick={onPick} />
+    <Panel n={2} title={`Activity · ${LABELS.length} ${W.us}`} right={<span className="hidden font-mono text-[10.5px] text-faint sm:inline">colour = topic · intensity = threads</span>} body="grid min-w-0 gap-4 p-6">
+      <Heatmap rows={list.map((r) => ({ id: r.p.id, label: r.p.title, values: r.p.s, c: CAT_STYLE[r.p.cat].c, glyph: CAT_STYLE[r.p.cat].glyph }))} cols={LABELS} onPick={onPick} />
     </Panel>
   );
 }
@@ -679,20 +682,20 @@ function Detail({ p, st, inList, addShort, openDraft, dismiss, weeks }) {
         )}
         <div>
           <Eyebrow>Source threads</Eyebrow>
-          {p.evidence.length === 0 ? <p className="mt-2 text-[13px] text-muted">No threads for this pain point in the last four weeks.</p> : (
+          {p.evidence.length === 0 ? <p className="mt-2 text-[13px] text-muted">No threads for this pain point in the last four {W.us}.</p> : (
             <ul className="mt-2 grid gap-2 sm:grid-cols-2">
               {p.evidence.map((e) => (
                 <li key={e.url} className="grid content-start gap-1 rounded-[12px] border border-line bg-surface p-3 text-[12.5px]">
                   <a href={e.url} target="_blank" rel="noopener noreferrer" className="font-medium text-ink hover:underline">{e.title} ↗</a>
                   {e.quote && <div className="line-clamp-2 text-muted">"{e.quote}"</div>}
-                  <span className="mt-1 inline-flex items-center gap-1.5 font-mono text-[10.5px] text-faint"><SrcDot s={e.platform} size={7} />{SOURCE_NAMES[e.platform]} · {d8(e.week)}</span>
+                  <span className="mt-1 inline-flex items-center gap-1.5 font-mono text-[10.5px] text-faint"><SrcDot s={e.platform} size={7} />{SOURCE_NAMES[e.platform]} · {d8(e.day || e.week)}</span>
                 </li>
               ))}
             </ul>
           )}
         </div>
         <dl className="grid gap-1 text-[12.5px]">
-          <dt className="font-mono text-[10px] uppercase tracking-[.12em] text-faint">Team notes (not from this week's data)</dt>
+          <dt className="font-mono text-[10px] uppercase tracking-[.12em] text-faint">Team notes (not from {W.this}'s data)</dt>
           <Def t="Hits hardest" d={p.suits} />
           <Def t="Less relevant for" d={p.notFor} />
           <Def t="Our angle" d={p.angle} />
@@ -705,25 +708,25 @@ function Detail({ p, st, inList, addShort, openDraft, dismiss, weeks }) {
       </div>
       <div className="grid min-w-0 content-start gap-4">
         <div>
-          <Eyebrow>Unique threads per week</Eyebrow>
-          <div className="mt-3 grid h-[96px] grid-cols-8 items-end gap-2">
+          <Eyebrow>Unique threads per {W.u}</Eyebrow>
+          <div className="mt-3 grid h-[96px] items-end gap-2" style={{ gridTemplateColumns: `repeat(${p.s.length}, minmax(0, 1fr))` }}>
             {p.s.map((v, i) => (
               <div key={i} className="flex h-full flex-col items-center justify-end gap-1">
                 <span className="font-mono text-[10px] text-muted">{v}</span>
-                <div className="relative mx-auto w-3 flex-1 overflow-hidden rounded-full bg-track"><div className="absolute inset-x-0 bottom-0 rounded-full" style={{ height: `${(v / max) * 100}%`, background: i === 7 ? `linear-gradient(0deg, ${CAT_STYLE[p.cat].c}, ${CAT_STYLE[p.cat].c2})` : 'var(--line-strong)', transition: 'height .5s var(--ease)' }} /></div>
+                <div className="relative mx-auto w-3 flex-1 overflow-hidden rounded-full bg-track"><div className="absolute inset-x-0 bottom-0 rounded-full" style={{ height: `${(v / max) * 100}%`, background: i === L ? `linear-gradient(0deg, ${CAT_STYLE[p.cat].c}, ${CAT_STYLE[p.cat].c2})` : 'var(--line-strong)', transition: 'height .5s var(--ease)' }} /></div>
               </div>))}
           </div>
-          <div className="mt-1 grid grid-cols-8 gap-2">{weeks.map((w) => <span key={w} className="text-center font-mono text-[9px] text-faint">{d8(w)}</span>)}</div>
+          <div className="mt-1 grid gap-2" style={{ gridTemplateColumns: `repeat(${p.s.length}, minmax(0, 1fr))` }}>{LABELS.map((w) => <span key={w} className="truncate text-center font-mono text-[9px] text-faint">{w}</span>)}</div>
         </div>
         <dl className="grid grid-cols-2 gap-x-4 gap-y-1.5 text-[12.5px]">
-          <dt className="text-muted">Normal (4-week avg)</dt><dd className="text-right font-mono">{st.mean.toFixed(1)}</dd>
-          <dt className="text-muted">This week vs normal</dt><dd className="text-right font-mono">{st.mean ? `${st.ratio.toFixed(2)}×` : 'new'}</dd>
-          <dt className="text-muted" title="How unusual this week is. 2 or more is very unlikely to be random wobble.">Unusualness score ⓘ</dt><dd className="text-right font-mono">{st.z.toFixed(2)}</dd>
+          <dt className="text-muted">Normal ({Math.min(4, L)}-{W.u} avg)</dt><dd className="text-right font-mono">{st.mean.toFixed(1)}</dd>
+          <dt className="text-muted">{W.This} vs normal</dt><dd className="text-right font-mono">{st.mean ? `${st.ratio.toFixed(2)}×` : 'new'}</dd>
+          <dt className="text-muted" title={`How unusual ${W.this} is. 2 or more is very unlikely to be random wobble.`}>Unusualness score ⓘ</dt><dd className="text-right font-mono">{st.z.toFixed(2)}</dd>
           <dt className="text-muted">Different developers</dt><dd className="text-right font-mono">{p.voices}</dd>
         </dl>
         <div className="grid grid-cols-4 gap-3 border-t border-line pt-3">
           {SOURCES.map((s) => (
-            <div key={s} className="min-w-0"><div className="truncate font-mono text-[9.5px] uppercase tracking-[.08em] text-faint">{SRC[s].abbr} · {SOURCE_NAMES[s].split(' ')[0]}</div><div className="font-mono text-[18px] font-semibold">{p.bySource[s]?.[7] || 0}</div><div className="mt-1 h-[3px] rounded-full" style={{ background: `linear-gradient(90deg, ${SRC[s].c}, ${SRC[s].c2})` }} /></div>
+            <div key={s} className="min-w-0"><div className="truncate font-mono text-[9.5px] uppercase tracking-[.08em] text-faint">{SRC[s].abbr} · {SOURCE_NAMES[s].split(' ')[0]}</div><div className="font-mono text-[18px] font-semibold">{p.bySource[s]?.[L] || 0}</div><div className="mt-1 h-[3px] rounded-full" style={{ background: `linear-gradient(90deg, ${SRC[s].c}, ${SRC[s].c2})` }} /></div>
           ))}
         </div>
       </div>
@@ -741,8 +744,8 @@ function Leaderboard(props) {
       <div className="card min-w-0 overflow-hidden">
       <div className="grid gap-4 border-b border-line px-6 py-5">
         <div className="flex flex-wrap items-center justify-end gap-3">
-          <div className="flex rounded-full border border-line p-[3px]" role="group" aria-label="Compare this week against">
-            {[['wow', 'vs last week'], ['base', 'vs 4-week normal']].map(([k, l]) => <button key={k} onClick={() => setCmp(k)} aria-pressed={cmp === k} className={seg(cmp === k)}>{l}</button>)}
+          <div className="flex rounded-full border border-line p-[3px]" role="group" aria-label={`Compare ${W.this} against`}>
+            {[['wow', `vs ${W.last}`], ['base', `vs ${W.normal}`]].map(([k, l]) => <button key={k} onClick={() => setCmp(k)} aria-pressed={cmp === k} className={seg(cmp === k)}>{l}</button>)}
           </div>
         </div>
         <div className="grid gap-3 lg:grid-cols-[120px_1fr] lg:items-center">
@@ -786,7 +789,7 @@ function Leaderboard(props) {
           </div>
         )}
         {failed.length > 0 && (
-          <StatusDot color="var(--alert)" word={`${failed.map((f) => SOURCE_NAMES[f]).join(', ')} did not respond, so it is left out of every week`} />
+          <StatusDot color="var(--alert)" word={`${failed.map((f) => SOURCE_NAMES[f]).join(', ')} did not respond, so it is left out of ${W.every}`} />
         )}
       </div>
       {rows.length === 0 ? (
@@ -802,8 +805,8 @@ function Leaderboard(props) {
                 <th className="px-2 py-2.5 font-normal">Pain point</th>
                 <th className="px-2 py-2.5 font-normal">Topic</th>
                 <th className="px-2 py-2.5 text-right font-normal">Threads</th>
-                <th className="px-2 py-2.5 text-right font-normal">{cmp === 'wow' ? 'vs last week' : 'vs normal'}</th>
-                <th className="px-2 py-2.5 font-normal">8 weeks</th>
+                <th className="px-2 py-2.5 text-right font-normal">{cmp === 'wow' ? `vs ${W.last}` : 'vs normal'}</th>
+                <th className="px-2 py-2.5 font-normal">{LABELS.length} {W.us}</th>
                 <th className="px-2 py-2.5 font-normal">Signal</th>
                 <th className="px-5 py-2.5 text-right font-normal">Unsolved</th>
               </tr>
@@ -854,7 +857,7 @@ function Leaderboard(props) {
         </div>
       )}
       <div className="flex flex-wrap items-center justify-between gap-2 border-t border-line px-6 py-3 text-[11.5px] text-faint">
-        <span>Threads are unique threads per week across sources. "Signal" compares this week with the 4-week normal, so a big % change on small numbers stays Steady.</span>
+        <span>Threads are unique threads per {W.u} across sources. "Signal" compares {W.this} with the {W.normal}, so a big % change on small numbers stays Steady.</span>
         {hiddenCount > 0 && <button onClick={() => setShowHidden(!showHidden)} className="text-link underline underline-offset-2">{showHidden ? 'Hide dismissed' : `${hiddenCount} dismissed · show`}</button>}
       </div>
       </div>
@@ -1044,8 +1047,8 @@ function SystemView({ data, healthInfo, srcSel, toggleSrc }) {
       <Panel n={5} title="How to read the brief" body="px-6 py-4 text-[13px]">
         <dl className="grid gap-1.5 md:grid-cols-2">
           <Def t="Thread" d="one discussion, counted once even if it has 300 comments or is cross-posted." />
-          <Def t="Normal" d="the average of the four weeks before this one." />
-          <Def t="Unusual spike / Climbing" d="this week is well above normal, beyond the usual week-to-week wobble." />
+          <Def t="Normal" d={`the average of the four ${W.us} before this one.`} />
+          <Def t="Unusual spike / Climbing" d={`${W.this} is well above normal, beyond the usual ${W.u}-to-${W.u} wobble.`} />
           <Def t="Steady" d="any change is within normal wobble, even if the % looks big." />
           <Def t="Unsolved" d="share of threads with no accepted answer, fix or closed issue." />
           <Def t="Genuine complaint" d="a thread describing a real problem. How-to questions and user errors are filtered out by Gemini before counting." />
@@ -1064,7 +1067,7 @@ function FirstRun({ onRun, running }) {
       <div className="relative z-[1] grid max-w-[640px] gap-3">
         <PanelLabel>Welcome, Sumit</PanelLabel>
         <h2 className="text-[28px] font-semibold leading-tight">Your first Friday brief is one click away</h2>
-        <p className="text-muted">Pulse pulls about eight weeks of threads from Hacker News, Stack Overflow, GitHub Issues and Reddit, so this week can be compared with what's normal. Gemini Flash then sorts real pain from debugging noise. It takes a few minutes; keep this tab open.</p>
+        <p className="text-muted">Pulse keeps up to seven months of threads from Hacker News, Stack Overflow, GitHub Issues and Reddit, so this week can be compared with what's normal. Gemini Flash then sorts real pain from debugging noise. It takes a few minutes; keep this tab open.</p>
         <div><Btn kind="primary" size="lg" onClick={onRun} disabled={running}>{running ? 'Running…' : 'Run the first brief'}</Btn></div>
       </div>
     </section>
@@ -1074,7 +1077,8 @@ function FirstRun({ onRun, running }) {
 export default function Dashboard() {
   const [view, setViewState] = useState('brief');
   const [data, setData] = useState(null); const [loadError, setLoadError] = useState(null);
-  const [week, setWeekState] = useState(null);
+  const [periodQ, setPeriodQ] = useState(null); // what the user picked: { grain, week | month | from,to }
+  const [cal, setCal] = useState(null); const [histBusy, setHistBusy] = useState(false);
   const [cmp, setCmp] = useState('wow'); const [mode, setMode] = useState('balanced'); const [cat, setCat] = useState('all');
   const [srcSel, setSrcSel] = useState(SOURCES); const [sort, setSort] = useState('priority'); const [open, setOpen] = useState(null);
   const [dismissed, setDismissed] = useState([]); const [showHidden, setShowHidden] = useState(false);
@@ -1089,10 +1093,11 @@ export default function Dashboard() {
   const toast = useCallback((m, u = null) => { setToastMsg(m); setUndo(() => u); clearTimeout(tRef.current); tRef.current = setTimeout(() => { setToastMsg(null); setUndo(null); }, 5000); }, []);
   const setView = (v) => { setViewState(v); try { history.replaceState(null, '', v === 'brief' ? location.pathname : `#${v}`); } catch {} window.scrollTo({ top: 0, behavior: 'smooth' }); };
 
-  const loadBrief = useCallback(async (w) => {
-    try { const d = await api(`brief${w ? `?week=${w}` : ''}`); setData(d); setWeekState(d.week); setLoadError(null); return d; }
+  const loadBrief = useCallback(async (q) => {
+    try { const d = await api(`brief${qs(typeof q === 'string' ? { grain: 'week', week: q } : q)}`); setData(d); setLoadError(null); return d; }
     catch (e) { setLoadError(e.message); return null; }
   }, []);
+  const loadCal = useCallback(async () => { try { setCal(await api('calendar')); } catch (e) { toast(`Calendar could not load: ${e.message}`); } }, []); // eslint-disable-line react-hooks/exhaustive-deps
   const loadTerms = useCallback(async () => { try { const r = await api('watchlist'); setTerms(r.terms); setTermsError(null); } catch (e) { setTermsError(e.message); } }, []);
   const loadShort = useCallback(async (w) => { if (!w) return; try { setShort(await api(`shortlist?week=${w}`)); } catch (e) { toast(e.message); } }, [toast]);
 
@@ -1100,13 +1105,15 @@ export default function Dashboard() {
     const h = (location.hash || '').slice(1); if (VIEWS.some(([k]) => k === h)) setViewState(h);
     setViewerState(store.get('pulse-viewer', 'sumit'));
     try { setDismissed(JSON.parse(store.get('pulse-dismissed', '[]'))); } catch {}
-    loadBrief().then((d) => d && loadShort(d.week));
+    loadBrief().then((d) => d && loadShort(d.week || d.latest));
     loadTerms();
     api('health').then(setHealthInfo).catch((e) => setHealthInfo({ db: { ok: false, error: e.message }, gemini: {} }));
   }, [loadBrief, loadShort, loadTerms]);
 
   const setViewer = (v) => { setViewerState(v); store.set('pulse-viewer', v); };
-  const setWeek = async (w) => { setOpen(null); const d = await loadBrief(w); if (d) loadShort(d.week); };
+  // the team vote always belongs to a Friday brief: the week being viewed, or the latest week in monthly/range views
+  const setPeriod = async (q) => { setOpen(null); setPeriodQ(q); const d = await loadBrief(q); if (d) loadShort(d.week || d.latest); };
+  const setWeek = (w) => setPeriod(w ? { grain: 'week', week: w } : null);
   const saveDismissed = (list) => { setDismissed(list); store.set('pulse-dismissed', JSON.stringify(list)); };
 
   const failed = data?.lastRun?.stats?.failedSources || [];
@@ -1133,9 +1140,13 @@ export default function Dashboard() {
   if (failed.length) problems.push(`${failed.map((f) => SOURCE_NAMES[f]).join(', ')} not responding`);
   if (data?.lastRun?.stats?.gemini && !data.lastRun.stats.gemini.ok) problems.push('Gemini unavailable, keyword rules used');
 
+  const week = data?.week || null; // set only in the weekly view
+  const voteWeek = data?.week || data?.latest || null;
+  const period = data?.period || null;
+  const curQ = periodQ || (period ? (period.grain === 'week' ? { grain: 'week', week: data.week } : period.grain === 'month' ? { grain: 'month', month: period.key.slice(2) } : { grain: 'custom', from: period.from, to: period.to }) : null);
   const shortAct = async (body, msg) => {
     setShortBusy(true);
-    try { setShort(await api('shortlist', { ...body, week })); if (msg) toast(msg); } catch (e) { toast(e.message); } finally { setShortBusy(false); }
+    try { setShort(await api('shortlist', { ...body, week: voteWeek })); if (msg) toast(msg); } catch (e) { toast(e.message); } finally { setShortBusy(false); }
   };
   const addShort = (id) => shortAct({ op: 'add', id }, 'Put to team vote');
   const dismiss = (id) => { const next = [...dismissed, id]; saveDismissed(next); setOpen(null); toast('Hidden from this brief', () => saveDismissed(next.filter((x) => x !== id))); };
@@ -1143,15 +1154,16 @@ export default function Dashboard() {
   const toggleSrc = (s) => setSrcSel((ss) => (ss.includes(s) ? ss.filter((x) => x !== s) : [...ss, s]));
   const clearFilters = () => { setCat('all'); setSrcSel(SOURCES); setMode('balanced'); };
   const reset = () => {
-    const snap = { week, cmp, sort, cat, srcSel, mode, showHidden, view };
+    const snap = { q: curQ, cmp, sort, cat, srcSel, mode, showHidden, view };
     clearFilters(); setCmp('wow'); setSort('priority'); setOpen(null); setShowHidden(false); setView('brief');
-    if (data && week !== data.latest) setWeek(data.latest);
-    toast('View reset to the latest brief. Your watchlist, votes and hidden items are kept.', () => { setCmp(snap.cmp); setSort(snap.sort); setCat(snap.cat); setSrcSel(snap.srcSel); setMode(snap.mode); setShowHidden(snap.showHidden); setView(snap.view); if (snap.week !== week) setWeek(snap.week); });
+    const atLatest = data && period?.grain === 'week' && data.week === data.latest;
+    if (data && !atLatest) setPeriod(null);
+    toast('View reset to the latest brief. Your watchlist, votes and hidden items are kept.', () => { setCmp(snap.cmp); setSort(snap.sort); setCat(snap.cat); setSrcSel(snap.srcSel); setMode(snap.mode); setShowHidden(snap.showHidden); setView(snap.view); if (!atLatest) setPeriod(snap.q); });
   };
 
-  const labelLoop = async () => {
+  const labelLoop = async (maxRounds = 40) => {
     let total = 0, rounds = 0, last = null;
-    while (rounds < 40) {
+    while (rounds < maxRounds) {
       rounds++;
       last = await api('classify', {});
       total += last.labelled;
@@ -1169,11 +1181,11 @@ export default function Dashboard() {
       setStep(1);
       const { total } = await labelLoop();
       setStep(2); setStepNote('');
-      await loadBrief(data?.latest || undefined);
+      await loadBrief(curQ);
       setStep(3); setStepNote('');
       const sum = await api('summarize', {}).catch((e) => ({ error: e.message }));
-      const d = await loadBrief(data?.latest || undefined);
-      await Promise.all([loadTerms(), d && loadShort(d.week), api('health').then(setHealthInfo).catch(() => {})]);
+      const d = await loadBrief(curQ);
+      await Promise.all([loadTerms(), d && loadShort(d.week || d.latest), api('health').then(setHealthInfo).catch(() => {}), cal && loadCal()]);
       setStep(4);
       toast(`Brief updated · ${r.inserted} new threads · ${total} labelled${r.backfilledTerms?.length ? ` · ${r.backfilledTerms.length} new term${r.backfilledTerms.length > 1 ? 's' : ''} back-filled 8 weeks` : ''}${sum.error ? ' · summaries failed' : ''}${failedNow.length ? ` · ${failedNow.length} source${failedNow.length > 1 ? 's' : ''} down` : ''}`);
     } catch (e) {
@@ -1183,31 +1195,58 @@ export default function Dashboard() {
   const [summarizing, setSummarizing] = useState(false);
   const summarize = async () => {
     setSummarizing(true);
-    try { const r = await api('summarize', { week }); await loadBrief(week); toast(r.error ? `Summary failed: ${r.error}` : `AI summaries written for ${r.written} pain point${r.written === 1 ? '' : 's'}`); }
+    try { const r = await api('summarize', { period: curQ }); await loadBrief(curQ); toast(r.error ? `Summary failed: ${r.error}` : `AI summaries written for ${r.written} pain point${r.written === 1 ? '' : 's'}`); }
     catch (e) { toast(`Summary failed: ${e.message}`); } finally { setSummarizing(false); }
   };
   const continueLabelling = async () => {
     setRunning(true); setStep(1); setStepNote('');
-    try { await labelLoop(); setStep(2); await loadBrief(week); toast('Labelling finished'); }
+    try { await labelLoop(); setStep(2); await loadBrief(curQ); toast('Labelling finished'); }
     catch (e) { toast(`Labelling stopped: ${e.message}`); } finally { setRunning(false); }
+  };
+
+  // six months of history: fetch older weeks block by block, then label them
+  const loadHistory = async () => {
+    setHistBusy(true); setRunning(true); setStep(0); setStepNote('Loading older weeks…'); window.scrollTo({ top: 0, behavior: 'smooth' });
+    try {
+      let h = null, tries = 0;
+      do {
+        h = await api('history', {});
+        tries++;
+        const failedSrc = Object.entries(h.sources || {}).filter(([, v]) => !v.ok).map(([k]) => SOURCE_NAMES[k]);
+        setStepNote(`History: ${h.filled} of ${h.slices} blocks loaded${h.inserted != null ? ` · +${h.inserted} threads` : ''}${failedSrc.length ? ` · ${failedSrc.join(', ')} busy, will retry` : ''}`);
+        if (failedSrc.length && h.remaining) await new Promise((r) => setTimeout(r, 20000)); // GitHub search allows about 10 calls a minute
+      } while (h.remaining > 0 && tries < h.slices * 3);
+      setStep(1);
+      const { total } = await labelLoop(200);
+      setStep(2);
+      await Promise.all([loadBrief(curQ), loadCal()]);
+      setStep(4);
+      toast(h.remaining ? `History partly loaded (${h.filled}/${h.slices}); run it again later to finish` : `Six months of history loaded · ${total} threads labelled`);
+    } catch (e) { toast(`History stopped: ${e.message}`); }
+    finally { setRunning(false); setHistBusy(false); }
   };
 
   const empty = data && data.totalThreads === 0;
   const weekLabel = week ? range(week) : '';
+  // words and bucket count for whatever period is on screen
+  W = mkW(period?.unit || 'week'); L = (data?.weeks?.length || 8) - 1; LABELS = data?.labels || (data?.weeks || []).map(d8);
+  const eyebrow = !period || period.grain === 'week' ? `Friday morning brief${week ? ` · complete week ${weekLabel}` : ''}`
+    : period.grain === 'month' ? `Monthly report · ${period.label}` : `Custom range · ${period.label}${period.complete ? '' : ' (so far)'}`;
+  const picker = <PeriodPicker period={period} cal={cal} loadCal={loadCal} onApply={setPeriod} history={cal?.history} onLoadHistory={loadHistory} historyBusy={histBusy} />;
   const stale = data?.lastRun && Date.now() - new Date(data.lastRun.startedAt).getTime() > 8 * 864e5;
   return (
     <div className="relative z-[1] min-h-screen">
       <div className="pointer-events-none absolute inset-x-0 top-0 h-[460px] overflow-hidden" aria-hidden="true"><Orbs /></div>
-      <TopNav view={view} setView={setView} data={data} week={week} setWeek={setWeek} running={running} onRun={run} onReset={reset} problems={problems} checked={checked} />
+      <TopNav view={view} setView={setView} data={data} running={running} onRun={run} onReset={reset} problems={problems} checked={checked} picker={picker} />
       <main className="mx-auto grid max-w-[1320px] gap-4 px-4 py-6 sm:px-6">
         <div className="relative flex flex-wrap items-end justify-between gap-3 py-2">
           <div className="relative z-[1] min-w-0">
-            <Eyebrow>{view === 'brief' ? `Friday morning brief${week ? ` · complete week ${weekLabel}` : ''}` : `Pulse · ${VIEWS.find(([k]) => k === view)[1]}`}</Eyebrow>
+            <Eyebrow>{view === 'brief' ? eyebrow : `Pulse · ${VIEWS.find(([k]) => k === view)[1]}${period && period.grain !== 'week' && view === 'trends' ? ` · ${period.label}` : ''}`}</Eyebrow>
             <h1 className="mt-2 text-[28px] font-semibold leading-tight sm:text-[34px]">{view === 'brief' ? 'What developers are struggling with right now' : VIEWS.find(([k]) => k === view)[1]}</h1>
             <p className="mt-2 max-w-[80ch] text-[13px] text-muted">
               {loadError ? 'The brief could not be loaded.' : !data ? 'Loading your latest brief: fetching the most recent report from the database…'
                 : data.totalThreads === 0 ? 'No report yet. Run the first brief to collect eight weeks of history.'
-                : <>{data.corpus[7]} threads read this week · collected <span className="font-mono">{data.lastRun ? ist(data.lastRun.startedAt) : '–'}</span>{data?.lastRun && <span className={stale ? 'text-alert-ink' : ''}> ({ago(data.lastRun.startedAt)})</span>}</>}
+                : <>{data.corpus[L]} threads read {W.this} · collected <span className="font-mono">{data.lastRun ? ist(data.lastRun.startedAt) : '–'}</span>{data?.lastRun && <span className={stale ? 'text-alert-ink' : ''}> ({ago(data.lastRun.startedAt)})</span>}</>}
             </p>
             {data && !loadError && <div className="mt-3"><PlatformStrip platforms={platforms} /></div>}
           </div>
@@ -1223,7 +1262,7 @@ export default function Dashboard() {
         {loadError && (
           <div className="card flex flex-wrap items-center justify-between gap-3 p-5 text-[13px]">
             <span><StatusDot color="var(--alert)" word="Load failed" /> <span className="ml-2">{loadError}</span></span>
-            <Btn size="sm" onClick={() => loadBrief(week)}>Try again</Btn>
+            <Btn size="sm" onClick={() => loadBrief(curQ)}>Try again</Btn>
           </div>
         )}
         {!data && !loadError && <div className="grid grid-cols-2 gap-4 xl:grid-cols-6">{[0, 1, 2, 3, 4, 5].map((i) => <div key={i} className="card h-[170px] animate-pulse" />)}</div>}
@@ -1239,7 +1278,7 @@ export default function Dashboard() {
           </div>
           <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_360px]">
             <TopCalls rows={topPool} mode={mode} setMode={setMode} shortItems={short.items} addShort={addShort} openDraft={(ids) => setDraft({ ids })} focusRow={focusRow} onSummarize={summarize} summarizing={summarizing} />
-            <Shortlist items={short.items} titles={titles} viewer={viewer} setViewer={setViewer} act={shortAct} busy={shortBusy} openDraft={(ids, pack) => setDraft({ ids, pack })} />
+            <Shortlist items={short.items} titles={titles} viewer={viewer} setViewer={setViewer} act={shortAct} busy={shortBusy} openDraft={(ids, pack) => setDraft({ ids, pack })} weekNote={period && period.grain !== 'week' && voteWeek ? `Votes belong to the Friday brief for ${range(voteWeek)}.` : null} />
           </div>
           <div className="grid gap-4 xl:grid-cols-2">
             <TopicRings rows={topPool} />
@@ -1249,7 +1288,7 @@ export default function Dashboard() {
           <Panel n={9} title="How we counted" body="grid gap-4 p-6">
             <div className="grid grid-cols-2 gap-6 sm:grid-cols-4">
               {[
-                ['Threads read', data.corpus[7].toLocaleString('en-IN'), 'mentioned a tracked keyword', 'var(--cool)'],
+                ['Threads read', data.corpus[L].toLocaleString('en-IN'), 'mentioned a tracked keyword', 'var(--cool)'],
                 ['Genuine complaints', data.counts.pain.toLocaleString('en-IN'), data.counts.rules ? `${data.counts.rules} labelled by keyword rules` : 'labelled by Gemini Flash', 'var(--brand-orange)'],
                 ['Filtered out', data.counts.noise.toLocaleString('en-IN'), 'how-to questions, user errors, off-topic', 'var(--steady)'],
                 ['Platforms read', `${platforms.filter((x) => x.state === 'live').length}/${platforms.length}`, platforms.filter((x) => x.state !== 'live').map((x) => x.name).join(', ') + ' not included', 'var(--ok)'],
@@ -1257,7 +1296,7 @@ export default function Dashboard() {
                 <div key={l} className="grid gap-1"><div className="font-mono text-[10.5px] uppercase tracking-[.1em] text-faint">{l}</div><div className="font-mono text-[28px] font-semibold leading-none">{v}</div><div className="h-[3px] w-12 rounded-full" style={{ background: c }} /><div className="text-[11.5px] text-faint">{n}</div></div>
               ))}
             </div>
-            <p className="text-[11.5px] text-faint">How we count: a thread is one discussion, counted once however many comments it has; cross-posts are merged. Weeks run Friday to Thursday (IST) and only complete weeks are compared.</p>
+            <p className="text-[11.5px] text-faint">How we count: a thread is one discussion, counted once however many comments it has; cross-posts are merged. Weeks run Friday to Thursday (IST) and months are calendar months; only complete weeks and months are compared. A custom range is compared with equal-length periods just before it.</p>
           </Panel>
         </>)}
 
@@ -1275,7 +1314,7 @@ export default function Dashboard() {
           <span>Pulse for Sumit's sprint planning</span>
         </footer>
       </main>
-      {draft && week && <DraftPanel draft={draft} week={week} onClose={() => setDraft(null)} toast={toast} />}
+      {draft && voteWeek && <DraftPanel draft={draft} week={week || voteWeek} period={period?.grain === 'week' ? null : { ...curQ, label: period?.label, grain: period?.grain }} onClose={() => setDraft(null)} toast={toast} />}
       {toastMsg && (
         <div className="rise fixed left-1/2 z-40 flex max-w-[92vw] -translate-x-1/2 items-center gap-3 rounded-full border border-line-strong bg-surface-2 px-5 py-2.5 text-[13px] text-ink shadow-[var(--shadow-float)]" style={{ bottom: 'calc(16px + env(safe-area-inset-bottom,0px))' }} role="status">
           {toastMsg}{undo && <button onClick={() => { undo(); setToastMsg(null); }} className="font-medium text-link underline underline-offset-2">Undo</button>}
