@@ -36,7 +36,10 @@ Next.js 14 (App Router) on Vercel · Neon Postgres (`@neondatabase/serverless`) 
 | `GITHUB_TOKEN` | no | raises GitHub search rate limits |
 | `STACKEXCHANGE_KEY` | no | raises Stack Exchange quota |
 | `CRON_SECRET` | no | protects the cron endpoints |
-| `RESEND_API_KEY`, `ALERT_EMAIL` | no | daily health-check alert emails |
+| `RESEND_API_KEY` | no | enables email: the Friday brief and health alerts |
+| `BRIEF_EMAIL` | no | who gets the Friday brief (comma-separated). Falls back to `ALERT_EMAIL` |
+| `ALERT_EMAIL` | no | who gets health-check alerts |
+| `BRIEF_FROM` | no | sender, e.g. `Pulse <brief@yourdomain.com>`. Default `onboarding@resend.dev` only delivers to your own Resend account email |
 
 3. Open the app and click **Run the first brief**. The first run backfills about eight weeks so week-over-week comparisons work immediately.
 
