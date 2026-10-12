@@ -79,6 +79,47 @@ const Orbs = ({ colors = ['#A31B20', '#0A1686'] }) => (
 const seg = (on) => `press h-7 whitespace-nowrap rounded-full px-3 text-[11.5px] ${on ? 'bg-surface-2 text-ink ring-1 ring-line-strong' : 'text-muted hover:text-ink'}`;
 const chip = (on) => `press inline-flex h-7 items-center gap-1.5 whitespace-nowrap rounded-full border-[1.5px] px-3 text-[11.5px] ${on ? 'border-ink/70 bg-surface-2 text-ink' : 'border-line text-muted hover:text-ink'}`;
 
+/* every section: numbered label above, content in the card below */
+const Panel = ({ n, title, right, children, className = '', body = 'p-6' }) => (
+  <section className={`grid min-w-0 content-start gap-3 ${className}`}>
+    <PanelLabel n={n} right={right}>{title}</PanelLabel>
+    <div className={`card min-w-0 ${body}`}>{children}</div>
+  </section>
+);
+
+/* platforms: the four we read, plus the ones not connected yet */
+const PLATFORM_NAMES = { ...SOURCE_NAMES, discord: 'Discord', x: 'X (Twitter)' };
+const OFF_WHY = {
+  reddit: 'Needs a Reddit API app: add REDDIT_CLIENT_ID and REDDIT_CLIENT_SECRET in Vercel',
+  discord: 'Needs a Discord bot added to each server you want to read',
+  x: 'Needs a paid X API plan',
+};
+function platformStates(data, healthInfo) {
+  const st = data?.lastRun?.stats?.sources || {};
+  const failed = data?.lastRun?.stats?.failedSources || [];
+  const out = SOURCES.map((s) => {
+    const off = s === 'reddit' && (st.reddit?.connected === false || (healthInfo?.reddit && !healthInfo.reddit.connected && !(st.reddit?.ok > 0)));
+    const state = off ? 'off' : failed.includes(s) ? 'down' : st[s] ? 'live' : 'idle';
+    return { id: s, name: PLATFORM_NAMES[s], state, why: off ? OFF_WHY[s] : state === 'down' ? `Did not respond in the last run (${st[s]?.error || 'error'})` : st[s] ? `${st[s].fetched} threads fetched in the last run` : 'Not run yet' };
+  });
+  return [...out, { id: 'discord', name: 'Discord', state: 'off', why: OFF_WHY.discord }, { id: 'x', name: 'X (Twitter)', state: 'off', why: OFF_WHY.x }];
+}
+const P_STATE = { live: { c: 'var(--ok)', w: 'live' }, down: { c: 'var(--alert)', w: 'not responding' }, off: { c: 'var(--faint)', w: 'not connected' }, idle: { c: 'var(--faint)', w: 'not run yet' } };
+function PlatformStrip({ platforms }) {
+  return (
+    <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 text-[12px]" aria-label="Platforms">
+      <span className="font-mono text-[10.5px] uppercase tracking-[.12em] text-faint">Platforms</span>
+      {platforms.map((p) => (
+        <span key={p.id} className="inline-flex items-center gap-1.5" title={p.why}>
+          <i className="h-2 w-2 rounded-full" style={p.state === 'off' || p.state === 'idle' ? { border: '1.5px solid var(--faint)' } : { background: P_STATE[p.state].c }} aria-hidden="true" />
+          <span className={p.state === 'live' ? 'text-ink' : p.state === 'down' ? 'text-alert-ink' : 'text-faint'}>{p.name}</span>
+          {p.state !== 'live' && <span className="text-faint">· {P_STATE[p.state].w}</span>}
+        </span>
+      ))}
+    </div>
+  );
+}
+
 /* ── navigation ── */
 function TopNav({ view, setView, data, week, setWeek, running, onRun, onReset, problems, checked }) {
   const weekOpts = data ? [...data.weeks].reverse().slice(0, 4) : [];
@@ -173,139 +214,136 @@ function findings(rows) {
   return { loud, rising, unsolved, fresh };
 }
 
-/* ── KPI tile row ── */
-function KpiRow({ rows, data, failed }) {
+/* ── KPI tile row: four numbers, each with a plain-language title ── */
+function KpiRow({ rows, data }) {
   const c7 = data.corpus[7], c6 = data.corpus[6];
-  const live = rows.filter((r) => r.st.cur > 0);
   const rising = rows.filter((r) => r.st.label === 'Spike' || r.st.label === 'Climbing');
   const spikes = rows.filter((r) => r.st.label === 'Spike').length;
-  const cooling = rows.filter((r) => r.st.label === 'Cooling').length;
-  const voices = sum(rows.map((r) => r.p.voices));
   const curTot = sum(rows.map((r) => r.st.cur));
   const unsolved = curTot ? Math.round(sum(rows.map((r) => r.p.unresolved * r.st.cur)) / curTot) : 0;
-  const worst = [...live].sort((a, b) => b.p.unresolved - a.p.unresolved)[0];
-  const painWeekly = data.weeks.map((_, i) => sum(rows.map((r) => r.p.s[i])));
-  const sharePain = c7 ? Math.round((data.counts.pain / c7) * 100) : 0;
+  const share = c7 ? Math.round((data.counts.pain / c7) * 100) : 0;
   const d = c7 - c6;
   return (
-    <div className="grid grid-cols-2 gap-4 md:grid-cols-3 xl:grid-cols-6">
-      <Tile label="Threads analysed" value={c7.toLocaleString('en-IN')} unit="threads" tint="var(--cool)"
-        delta={c6 ? { t: `${d >= 0 ? '+' : ''}${d}`, c: 'var(--muted)' } : null}
-        viz={<Spark values={data.corpus} color="var(--cool)" w={150} h={30} />} foot={[['last wk', c6], ['8-wk avg', Math.round(sum(data.corpus) / 8)]]} />
-      <Tile label="Real pain" value={data.counts.pain} unit={`of ${c7}`} tint="var(--warn)"
-        viz={<Capsule value={sharePain} max={100} c="#DF7E0A" c2="#F4A53F" h={14} label={`${sharePain}% of threads are real pain`} />} foot={[['share', `${sharePain}%`], ['noise', data.counts.noise]]} />
-      <Tile label="Pain points active" value={live.length} unit={`of ${rows.length}`} tint="var(--cat-culture)"
-        viz={<Segments n={live.length} of={rows.length} color="var(--cat-culture)" />} foot={[['new', rows.filter((r) => r.st.cur > 0 && r.st.mean === 0).length], ['quiet', rows.length - live.length]]} />
-      <Tile label="Rising" value={rising.length} unit="pain points" tint="var(--alert)"
-        viz={<Segments n={rising.length} of={rows.length} color="var(--alert)" />} foot={[['spikes', spikes], ['cooling', cooling]]} />
-      <Tile label="Developers" value={voices} unit="voices" tint="var(--ok)"
-        viz={<Spark values={painWeekly} color="var(--ok)" w={150} h={30} />} foot={[['communities', `${SOURCES.length - failed.length}/${SOURCES.length}`], ['pain thr.', curTot]]} />
-      <Tile label="Unsolved" value={unsolved} unit="%" tint="#F0767A"
-        viz={<Capsule value={unsolved} max={100} c="#A31B20" c2="#F0767A" h={14} label={`${unsolved}% of this week's pain threads unsolved`} />} foot={[['worst', worst ? `${worst.p.unresolved}%` : '–'], ['solved', `${100 - unsolved}%`]]} />
+    <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+      <Tile label="Threads read this week" value={c7.toLocaleString('en-IN')} unit="threads" tint="var(--cool)"
+        delta={c6 ? { t: `${d >= 0 ? '+' : ''}${d} vs last week`, c: 'var(--muted)' } : null}
+        note="Every discussion that mentioned a tracked keyword."
+        viz={<Spark values={data.corpus} color="var(--cool)" w={220} h={30} />} />
+      <Tile label="Genuine complaints" value={data.counts.pain} unit={`of ${c7}`} tint="var(--brand-orange)"
+        note={`${share}% describe a real problem. The rest were how-to questions or off-topic.`}
+        viz={<Capsule value={share} max={100} c="#DF7E0A" c2="#F4A53F" h={14} label={`${share}% of threads are genuine complaints`} />} />
+      <Tile label="Problems getting worse" value={rising.length} unit={`of ${rows.length} tracked`} tint="var(--alert)"
+        note={rising.length ? `${spikes} spiking well above normal, ${rising.length - spikes} climbing.` : 'Nothing is above its usual level this week.'}
+        viz={<Segments n={rising.length} of={rows.length} color="var(--alert)" />} />
+      <Tile label="Still unsolved" value={unsolved} unit="%" tint="#F0767A"
+        note="Share of complaints with no accepted answer, fix or closed issue."
+        viz={<Capsule value={unsolved} max={100} c="#A31B20" c2="#F0767A" h={14} label={`${unsolved}% of complaints unsolved`} />} />
     </div>
   );
 }
 
-function ExecSummary({ rows, data, failed }) {
+function ExecSummary({ rows, data, failed, onEvidence }) {
   const f = findings(rows);
   const total = data.counts.pain;
   const parts = [];
-  if (!total) parts.push('No real pain threads were found this week.');
-  else parts.push(`${total} of ${data.corpus[7]} threads this week describe real developer pain; the rest were how-to questions or noise.`);
-  if (f.loud) parts.push(`The most discussed problem is "${f.loud.p.title}" (${f.loud.st.cur} threads, ${diffText(f.loud.st).replace(/ \(.*\)/, '')}).`);
-  if (f.rising && f.rising !== f.loud) parts.push(`"${f.rising.p.title}" is rising fastest (${f.rising.st.prev} → ${f.rising.st.cur}).`);
-  if (f.unsolved) parts.push(`${f.unsolved.p.unresolved}% of "${f.unsolved.p.title}" threads end without a fix.`);
+  if (!total) parts.push('No genuine complaints were found this week.');
+  else parts.push(`${total} of ${data.corpus[7]} threads this week are genuine complaints.`);
+  if (f.loud) parts.push(`The biggest is "${f.loud.p.title}" with ${f.loud.st.cur} threads (${f.loud.st.prev} last week).`);
+  if (f.rising && f.rising !== f.loud) parts.push(`"${f.rising.p.title}" is growing fastest.`);
   const caveats = [];
-  if (failed.length) caveats.push(`${failed.length} source${failed.length > 1 ? 's' : ''} unavailable, excluded from every week`);
-  if (total && total < 15) caveats.push('low volume, so read changes as early signals');
-  return (
-    <section className="card grid content-start gap-3 p-6" aria-label="Summary of this week">
-      <PanelLabel n={1}>This week · from counts, not AI</PanelLabel>
-      <p className="max-w-[90ch] text-[15px] leading-relaxed">{parts.join(' ')}</p>
-      {caveats.length > 0 && <StatusDot color="var(--warn)" word={`Caveat: ${caveats.join('; ')}`} />}
-    </section>
-  );
-}
-function KeyFindings({ rows, onEvidence }) {
-  const f = findings(rows);
-  const tiles = [
-    ['Most discussed', f.loud, (r) => `${r.st.cur} threads · ${r.p.voices} developers`],
-    ['Rising fastest', f.rising, (r) => diffText(r.st)],
-    ['Least solved', f.unsolved, (r) => `${r.p.unresolved}% of ${r.st.cur} threads unsolved`],
-    ['New this week', f.fresh, (r) => `${r.st.cur} threads, none in the 4 weeks before`],
+  if (failed.length) caveats.push(`${failed.map((x) => SOURCE_NAMES[x]).join(', ')} did not respond, so it is left out of every week`);
+  if (total && total < 15) caveats.push('volumes are small, so treat changes as early signals');
+  const facts = [
+    ['Biggest', f.loud, (r) => `${r.st.cur} threads · ${r.p.voices} people`],
+    ['Growing fastest', f.rising, (r) => `${r.st.prev} → ${r.st.cur} threads`],
+    ['Least solved', f.unsolved, (r) => `${r.p.unresolved}% have no fix`],
+    ['New this week', f.fresh, (r) => `${r.st.cur} threads, none before`],
   ];
   return (
-    <section className="grid gap-3" aria-label="Key findings">
-      <PanelLabel n={2}>Key findings</PanelLabel>
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        {tiles.map(([k, r, m]) => (
-          <article key={k} className="card lift grid min-w-0 content-start gap-2 p-4">
+    <Panel n={1} title="This week in brief" body="grid gap-5 p-6">
+      <p className="max-w-[90ch] text-[15px] leading-relaxed">{parts.join(' ')}</p>
+      {caveats.length > 0 && <StatusDot color="var(--warn)" word={`Note: ${caveats.join('; ')}`} />}
+      <div className="grid gap-4 border-t border-line pt-4 sm:grid-cols-2 xl:grid-cols-4">
+        {facts.map(([k, r, m]) => (
+          <div key={k} className="grid min-w-0 content-start gap-1.5">
             <div className="font-mono text-[10.5px] uppercase tracking-[.12em] text-faint">{k}</div>
             {r ? (<>
-              <div className="text-[14.5px] font-semibold leading-snug">{r.p.title}</div>
-              <div className="flex flex-wrap items-center gap-2"><TopicPill cat={r.p.cat} compact /><span className="font-mono text-[11.5px] text-muted">{m(r)}</span></div>
-              <button onClick={() => onEvidence(r.p.id)} className="justify-self-start text-[12px] text-link underline underline-offset-2">See the threads</button>
-            </>) : <div className="text-[12.5px] text-faint">No other pain point qualifies this week.</div>}
-          </article>
+              <button onClick={() => onEvidence(r.p.id)} className="text-left text-[13.5px] font-semibold leading-snug hover:underline">{r.p.title}</button>
+              <div className="font-mono text-[11.5px] text-muted">{m(r)}</div>
+            </>) : <div className="text-[12.5px] text-faint">Nothing qualifies this week.</div>}
+          </div>
         ))}
       </div>
-    </section>
+    </Panel>
   );
 }
 
-/* ── things to act on: observation → AI reading → next step ── */
-function TopCalls({ rows, mode, setMode, shortIds, addShort, openDraft, focusRow, onSummarize, summarizing }) {
+/* ── act on these first: numbers → what developers say → next step ── */
+function TopCalls({ rows, mode, setMode, shortItems, addShort, openDraft, focusRow, onSummarize, summarizing }) {
   const top = rows.filter((r) => r.p.rel !== 'outside' && r.st.cur >= MODES[mode].min && r.p.voices >= 2)
     .sort((a, b) => priority(b.p.rel, b.p.unresolved, b.st) - priority(a.p.rel, a.p.unresolved, a.st)).slice(0, 3);
   return (
     <section className="grid min-w-0 content-start gap-3">
-      <PanelLabel n={3} right={<span className="hidden text-[11.5px] text-faint sm:inline">Ranked by volume, growth, how unsolved, and closeness to our product</span>}>What to look into</PanelLabel>
+      <PanelLabel n={4} right={<span className="hidden text-[11.5px] text-faint sm:inline">Ranked by size, growth, how unsolved, and fit with our product</span>}>Act on these first</PanelLabel>
       {top.length === 0 && (
         <div className="card p-5 text-[13px] text-muted">Nothing meets the "{MODES[mode].label}" evidence level this week.{' '}
           {mode !== 'exploratory' && <button onClick={() => setMode('exploratory')} className="text-link underline underline-offset-2">Show early signals</button>}
         </div>
       )}
-      <div className={`grid gap-4 ${top.length >= 3 ? 'md:grid-cols-3' : top.length === 2 ? 'md:grid-cols-2' : ''}`}>
+      <div className="grid gap-4">
         {top.map(({ p, st }, i) => {
-          const inList = shortIds.includes(p.id);
+          const sl = shortItems.find((x) => x.id === p.id);
+          const votes = sl ? Object.values(sl.votes || {}) : [];
           const c = confidence(p, st);
           const ins = p.insight;
+          const t = TREND[st.label];
           return (
-            <article key={p.id} className="card lift rise flex min-w-0 flex-col gap-4 p-5" style={{ animationDelay: `${i * 70}ms` }}>
-              <div className="flex items-center justify-between gap-2"><span className="font-mono text-[11px] text-faint">{String(i + 1).padStart(2, '0')}</span><TrendPill label={st.label} /></div>
-              <div className="grid gap-2"><h3 className="text-[16px] font-semibold leading-snug">{p.title}</h3><TopicPill cat={p.cat} compact /></div>
-              <Layer k="What happened">
-                <div className="flex items-end justify-between gap-2">
-                  <span className="flex items-baseline gap-1.5"><b className="font-mono text-[34px] font-semibold leading-none">{st.cur}</b><span className="text-[12px] text-faint">threads</span></span>
-                  <Spark values={p.s} color={TREND[st.label].c} w={96} h={32} />
+            <article key={p.id} className="card lift rise grid min-w-0 gap-5 p-5 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.25fr)]" style={{ animationDelay: `${i * 70}ms`, boxShadow: `inset 3px 0 0 ${t.c}` }}>
+              {/* left: what happened */}
+              <div className="grid content-start gap-3">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="font-mono text-[22px] font-semibold leading-none text-faint">{String(i + 1).padStart(2, '0')}</span>
+                  <TrendPill label={st.label} />
+                  <TopicPill cat={p.cat} compact />
                 </div>
-                <div className="mt-1 font-mono text-[11.5px] text-muted">{diffText(st)}</div>
-                <div className="mt-2 grid grid-cols-3 border-t border-line pt-2 text-[11px]">
-                  {[['developers', p.voices], ['communities', p.communities], ['unsolved', `${p.unresolved}%`]].map(([k, v], j) => <div key={k} className={j ? 'border-l border-line pl-2' : ''}><div className="text-faint">{k}</div><div className="font-mono text-ink">{v}</div></div>)}
+                <h3 className="text-[17px] font-semibold leading-snug">{p.title}</h3>
+                <div className="flex items-end justify-between gap-3">
+                  <div>
+                    <div className="flex items-baseline gap-1.5"><b className="font-mono text-[40px] font-semibold leading-none">{st.cur}</b><span className="text-[12px] text-faint">threads this week</span></div>
+                    <div className="mt-1 font-mono text-[12px]" style={{ color: t.ink }}>{st.cur - st.prev > 0 ? '+' : ''}{st.cur - st.prev} vs last week ({st.prev})</div>
+                  </div>
+                  <Spark values={p.s} color={t.c} w={120} h={40} />
                 </div>
-                <div className="mt-2"><StatusDot color={c.c} word={c.label} /><span className="sr-only">{c.why}</span></div>
-              </Layer>
-              {ins ? (<>
-                <Layer k="What developers say" tag={`AI · ${ins.threads_used} threads`}>{ins.summary}</Layer>
-                {ins.gap && <Layer k="Gap they describe" tag="AI">{ins.gap}</Layer>}
-                <Layer k="Worth investigating" tag="AI suggestion">{ins.next_step}</Layer>
-              </>) : (
-                <div className="rounded-[12px] border border-dashed border-line p-3 text-[12px] text-muted">
-                  No AI summary for this week yet. <button disabled={summarizing} onClick={onSummarize} className="text-link underline underline-offset-2 disabled:opacity-50">{summarizing ? 'Writing…' : 'Summarise the threads'}</button>
+                <div className="grid grid-cols-3 border-t border-line pt-2 text-[11px]">
+                  {[['People', p.voices], ['Platforms', p.communities], ['Unsolved', `${p.unresolved}%`]].map(([k, v], j) => <div key={k} className={j ? 'border-l border-line pl-3' : ''}><div className="text-faint">{k}</div><div className="font-mono text-[13px] text-ink">{v}</div></div>)}
                 </div>
-              )}
-              <details className="text-[12px]">
-                <summary className="cursor-pointer text-muted">Team notes <span className="text-faint">(written by your team, not from this week's data)</span></summary>
-                <dl className="mt-1.5 grid gap-1">
-                  <Def t="Hits hardest" d={p.suits} />
-                  <Def t="Less relevant for" d={p.notFor} />
-                  <Def t="Our angle" d={p.angle} />
-                </dl>
-              </details>
-              <div className="mt-auto flex flex-wrap gap-2 pt-1">
-                <Btn size="sm" kind={inList ? 'secondary' : 'primary'} onClick={() => addShort(p.id)} disabled={inList}>{inList ? 'On shortlist ✓' : 'Add to shortlist'}</Btn>
-                <Btn size="sm" onClick={() => openDraft([p.id])}>Draft sprint brief</Btn>
-                <Btn size="sm" onClick={() => focusRow(p.id)}>See the threads</Btn>
+                <div className="flex flex-wrap items-center gap-3">
+                  <span title={c.why}><StatusDot color={c.c} word={c.label} /></span>
+                  {sl && <span className="font-mono text-[11px] text-muted">Team vote 👍 {votes.filter((v) => v === 'up').length} · 👎 {votes.filter((v) => v === 'down').length}{sl.decision === 'in' ? ' · in sprint' : sl.decision === 'later' ? ' · parked' : ''}</span>}
+                </div>
+              </div>
+              {/* right: what developers say (AI) */}
+              <div className="grid content-start gap-3 rounded-[12px] border border-line bg-surface-2 p-4">
+                {ins ? (<>
+                  <AiTag>Gemini summary of {ins.threads_used} threads</AiTag>
+                  {[['Developers say', ins.summary], ['Missing today', ins.gap], ['Try next', ins.next_step]].filter(([, v]) => v).map(([k, v]) => (
+                    <div key={k} className="grid gap-0.5 border-l-2 border-line-strong pl-3">
+                      <div className="font-mono text-[10px] uppercase tracking-[.12em] text-faint">{k}</div>
+                      <div className="text-[13px] leading-relaxed text-ink">{v}</div>
+                    </div>
+                  ))}
+                </>) : (
+                  <div className="text-[12.5px] text-muted">No summary yet. <button disabled={summarizing} onClick={onSummarize} className="text-link underline underline-offset-2 disabled:opacity-50">{summarizing ? 'Writing…' : 'Summarise the threads'}</button></div>
+                )}
+                <details className="text-[12px]">
+                  <summary className="cursor-pointer text-muted">Team notes <span className="text-faint">(written by us, not from this week's data)</span></summary>
+                  <dl className="mt-1.5 grid gap-1"><Def t="Hits hardest" d={p.suits} /><Def t="Less relevant for" d={p.notFor} /><Def t="Our angle" d={p.angle} /></dl>
+                </details>
+                <div className="flex flex-wrap gap-2 pt-1">
+                  <Btn size="sm" kind={sl ? 'secondary' : 'primary'} onClick={() => addShort(p.id)} disabled={!!sl}>{sl ? 'In team vote ✓' : 'Put to team vote'}</Btn>
+                  <Btn size="sm" onClick={() => openDraft([p.id])}>Draft sprint brief</Btn>
+                  <Btn size="sm" onClick={() => focusRow(p.id)}>Read the threads</Btn>
+                </div>
               </div>
             </article>
           );
@@ -315,63 +353,72 @@ function TopCalls({ rows, mode, setMode, shortIds, addShort, openDraft, focusRow
   );
 }
 
-/* ── shortlist + votes ── */
+/* ── team vote: everyone sees the tally; Sumit makes the call ── */
 function Shortlist({ items, titles, viewer, setViewer, act, openDraft, busy }) {
   const isOrg = viewer === 'sumit';
+  const tally = (x) => { const v = Object.values(x.votes || {}); return { up: v.filter((y) => y === 'up').length, down: v.filter((y) => y === 'down').length }; };
+  const ranked = [...items].sort((a, b) => (tally(b).up - tally(b).down) - (tally(a).up - tally(a).down));
+  const fav = ranked.find((x) => tally(x).up - tally(x).down > 0);
   const inSprint = items.filter((x) => x.decision === 'in');
+  const awaiting = items.filter((x) => !x.decision).length;
   return (
-    <aside className="card grid min-w-0 content-start gap-3 p-5" aria-label="Sprint shortlist">
-      <PanelLabel n={4}>Sprint shortlist</PanelLabel>
-      <div className="flex items-baseline gap-1.5"><span className="font-mono text-[34px] font-semibold leading-none">{items.length}</span><span className="text-[12px] text-faint">shortlisted · {inSprint.length} in sprint</span></div>
-      <label className="flex items-center gap-2 text-[12px] text-muted">You are
+    <Panel n={5} title="Team vote" body="grid content-start gap-4 p-5">
+      <div className="grid grid-cols-3 gap-2 text-center">
+        {[['In sprint', inSprint.length, 'var(--ok)'], ['Awaiting Sumit', awaiting, 'var(--warn)'], ['Parked', items.filter((x) => x.decision === 'later').length, 'var(--faint)']].map(([k, v, c]) => (
+          <div key={k} className="rounded-[12px] border border-line bg-surface-2 py-2"><div className="font-mono text-[24px] font-semibold leading-none" style={{ color: v ? c : 'var(--faint)' }}>{v}</div><div className="mt-1 text-[10.5px] text-faint">{k}</div></div>
+        ))}
+      </div>
+      <label className="flex items-center gap-2 text-[12px] text-muted">Voting as
         <select value={viewer} onChange={(e) => setViewer(e.target.value)} className="h-8 rounded-full border-[1.5px] border-line-strong bg-transparent px-3 text-[12px] text-ink">
           {Object.entries(PEOPLE).map(([k, v]) => <option key={k} value={k} className="bg-surface">{v.name} ({v.role})</option>)}
         </select>
       </label>
-      <p className="text-[12px] text-muted">{isOrg ? "You see everyone's votes and make the final call." : 'Vote 👍 or 👎. Only Sumit sees the full tally and decides.'}</p>
-      {items.length === 0 && <p className="rounded-[12px] border border-dashed border-line p-3 text-[12.5px] text-muted">Nothing shortlisted for this week yet. Use "Add to shortlist" on any pain point.</p>}
+      {items.length === 0 && <p className="rounded-[12px] border border-dashed border-line p-3 text-[12.5px] text-muted">Nothing up for a vote yet. Use "Put to team vote" on any problem.</p>}
       <ul className="grid gap-2">
-        {items.map((x) => {
-          const vals = Object.values(x.votes || {}); const ups = vals.filter((v) => v === 'up').length, downs = vals.filter((v) => v === 'down').length;
-          const mine = x.votes?.[viewer];
+        {ranked.map((x) => {
+          const { up, down } = tally(x); const mine = x.votes?.[viewer];
           const waiting = Object.keys(PEOPLE).filter((k) => !x.votes?.[k]).map((k) => PEOPLE[k].name);
+          const status = x.decision === 'in' ? { w: 'In sprint', c: 'var(--ok)' } : x.decision === 'later' ? { w: 'Parked', c: 'var(--faint)' } : { w: 'Awaiting Sumit', c: 'var(--warn)' };
           return (
-            <li key={x.id} className={`rounded-[12px] border bg-surface-2 p-3 ${x.decision === 'in' ? 'border-ok/70' : 'border-line'} ${x.decision === 'later' ? 'opacity-70' : ''}`} style={x.decision === 'in' ? { boxShadow: 'inset 3px 0 0 var(--ok)' } : undefined}>
+            <li key={x.id} className={`grid gap-2 rounded-[12px] border bg-surface-2 p-3 ${x.decision === 'later' ? 'opacity-70' : ''}`} style={{ borderColor: x.decision === 'in' ? 'var(--ok)' : 'var(--line)' }}>
               <div className="flex items-start justify-between gap-2">
-                <div className="min-w-0 text-[13px] font-medium leading-snug">{titles[x.id] || x.id}</div>
-                {isOrg && <button disabled={busy} onClick={() => act({ op: 'remove', id: x.id }, 'Removed from shortlist')} className="press rounded-full px-1.5 text-[12px] text-muted hover:text-ink" aria-label={`Remove ${titles[x.id]} from shortlist`}>✕</button>}
+                <div className="min-w-0 text-[13px] font-medium leading-snug">{titles[x.id] || x.id}{fav?.id === x.id && <span className="ml-1.5 align-middle font-mono text-[10px] uppercase tracking-[.08em] text-warn">team favourite</span>}</div>
+                {isOrg && <button disabled={busy} onClick={() => act({ op: 'remove', id: x.id }, 'Removed from the vote')} className="press rounded-full px-1.5 text-[12px] text-muted hover:text-ink" aria-label={`Remove ${titles[x.id]} from the vote`}>✕</button>}
               </div>
-              <div className="mt-2 flex flex-wrap items-center gap-2">
+              {/* tally, visible to everyone */}
+              <div className="flex items-center gap-2">
+                <div className="flex h-2 flex-1 overflow-hidden rounded-full bg-track" aria-label={`${up} for, ${down} against`}>
+                  <i style={{ width: `${(up / 3) * 100}%`, background: 'var(--ok)' }} /><i style={{ width: `${(down / 3) * 100}%`, background: 'var(--alert)' }} />
+                </div>
+                <span className="font-mono text-[11px] text-muted">👍 {up} · 👎 {down}</span>
+              </div>
+              <div className="flex flex-wrap gap-1 text-[11px]">
+                {Object.keys(PEOPLE).map((k) => <span key={k} className={`rounded-full border px-2 py-[1px] ${x.votes?.[k] ? 'border-line-strong text-ink' : 'border-dashed border-line text-faint'}`}>{PEOPLE[k].name} {x.votes?.[k] === 'up' ? '👍' : x.votes?.[k] === 'down' ? '👎' : '·'}</span>)}
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
                 {['up', 'down'].map((v) => (
                   <button key={v} disabled={busy} onClick={() => act({ op: 'vote', id: x.id, voter: viewer, vote: mine === v ? null : v })} aria-pressed={mine === v} aria-label={v === 'up' ? 'Vote for' : 'Vote against'}
                     className={`press h-7 rounded-full border-[1.5px] px-2.5 text-[12.5px] ${mine === v ? 'border-ink/70 bg-surface' : 'border-line'}`}>{v === 'up' ? '👍' : '👎'}</button>
                 ))}
-                {isOrg ? <span className="font-mono text-[11px] text-muted">{ups} for · {downs} against{waiting.length ? ` · waiting on ${waiting.join(', ')}` : ' · everyone voted'}</span>
-                  : <span className="text-[12px] text-muted">{mine ? 'Your vote is in' : 'Not voted yet'}</span>}
+                <StatusDot color={status.c} word={status.w} />
+                {!x.decision && waiting.length > 0 && <span className="text-[11px] text-faint">waiting on {waiting.join(', ')}</span>}
               </div>
-              {isOrg && vals.length > 0 && (
-                <div className="mt-1.5 flex flex-wrap gap-1 text-[11px]">{Object.entries(x.votes).map(([k, v]) => <span key={k} className="rounded-full border border-line px-2 py-[1px]">{PEOPLE[k]?.name || k} {v === 'up' ? '👍' : '👎'}</span>)}</div>
-              )}
               {isOrg && (
-                <div className="mt-2 flex flex-wrap gap-2">
-                  <Btn size="sm" disabled={busy} kind={x.decision === 'in' ? 'secondary' : 'ghost'} onClick={() => act({ op: 'decide', id: x.id, voter: 'sumit', decision: x.decision === 'in' ? null : 'in' })}>{x.decision === 'in' ? 'In this sprint ✓' : 'Put in sprint'}</Btn>
+                <div className="flex flex-wrap gap-2 border-t border-line pt-2">
+                  <Btn size="sm" disabled={busy} kind={x.decision === 'in' ? 'secondary' : 'ghost'} onClick={() => act({ op: 'decide', id: x.id, voter: 'sumit', decision: x.decision === 'in' ? null : 'in' })}>{x.decision === 'in' ? 'In sprint ✓' : 'Put in sprint'}</Btn>
                   <Btn size="sm" disabled={busy} onClick={() => act({ op: 'decide', id: x.id, voter: 'sumit', decision: x.decision === 'later' ? null : 'later' })}>{x.decision === 'later' ? 'Parked' : 'Park'}</Btn>
                   <Btn size="sm" onClick={() => openDraft([x.id])}>Sprint brief</Btn>
                 </div>
               )}
-              {!isOrg && x.decision && <div className="mt-1 text-[12px] text-muted">Sumit's call: {x.decision === 'in' ? 'in this sprint' : 'parked'}</div>}
             </li>
           );
         })}
       </ul>
-      {isOrg && inSprint.length > 0 && (
-        <div className="grid gap-2 rounded-[12px] border border-line bg-surface-2 p-3">
-          <StatusDot color="var(--ok)" word={`Ready for Monday · ${inSprint.length} item${inSprint.length > 1 ? 's' : ''}`} />
-          <Btn kind="primary" onClick={() => openDraft(inSprint.map((x) => x.id), true)}>Open Monday pack</Btn>
-        </div>
-      )}
-      {isOrg && !inSprint.length && items.length > 0 && <p className="text-[12px] text-muted">Put at least one item in the sprint to build the Monday pack.</p>}
-    </aside>
+      {isOrg ? (inSprint.length > 0
+        ? <Btn kind="primary" onClick={() => openDraft(inSprint.map((x) => x.id), true)}>Open Monday pack ({inSprint.length})</Btn>
+        : items.length > 0 && <p className="text-[12px] text-muted">Votes guide your call. Put at least one item in the sprint to build the Monday pack.</p>)
+        : <p className="text-[12px] text-muted">Sumit sees the same tally and makes the final call.</p>}
+    </Panel>
   );
 }
 
@@ -422,131 +469,130 @@ function DraftPanel({ draft, week, onClose, toast }) {
 
 /* ── overview instruments ── */
 function LoudestBars({ rows, onPick }) {
-  const live = [...rows].filter((r) => r.st.cur > 0).sort((a, b) => b.st.cur - a.st.cur).slice(0, 8);
+  const live = [...rows].filter((r) => r.st.cur > 0).sort((a, b) => b.st.cur - a.st.cur).slice(0, 7);
   const max = Math.max(4, ...live.map((r) => r.st.cur));
-  const top = live[0];
   return (
-    <section className="card grid min-w-0 content-start gap-4 p-6">
-      <PanelLabel n={5} right={<span className="font-mono text-[10.5px] text-faint">track = {max} threads</span>}>Loudest pain · this week</PanelLabel>
-      {top ? (<>
-        <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
-          <span className="font-mono text-[44px] font-semibold leading-none">{top.st.cur}</span>
-          <span className="text-[13px] text-faint">threads ·</span><span className="text-[13px] text-ink">{top.p.title}</span><TrendPill label={top.st.label} />
-        </div>
-        <ul className="grid gap-2.5">
-          {live.map((r, i) => { const t = CAT_STYLE[r.p.cat]; return (
-            <li key={r.p.id} className="grid grid-cols-[minmax(0,220px)_1fr_auto] items-center gap-3">
-              <button onClick={() => onPick(r.p.id)} className="flex min-w-0 items-center gap-2 text-left text-[12.5px] hover:underline"><Glyph kind={t.glyph} color={t.c} size={11} /><span className="truncate">{r.p.title}</span></button>
+    <Panel n={2} title="Most talked-about problems" right={<span className="font-mono text-[10.5px] text-faint">threads this week</span>} body="grid content-start gap-4 p-6">
+      {live.length ? (<>
+        <ul className="grid gap-3">
+          {live.map((r, i) => { const t = CAT_STYLE[r.p.cat]; const d = r.st.cur - r.st.prev; return (
+            <li key={r.p.id} className="grid gap-1.5">
+              <div className="flex items-center justify-between gap-2">
+                <button onClick={() => onPick(r.p.id)} className="flex min-w-0 items-center gap-2 text-left text-[13px] hover:underline"><Glyph kind={t.glyph} color={t.c2} size={11} /><span className="truncate">{r.p.title}</span></button>
+                <span className="shrink-0 font-mono text-[11px]" style={{ color: TREND[r.st.label].ink }}>{TREND[r.st.label].glyph} {d > 0 ? '+' : ''}{d}</span>
+              </div>
               <Capsule value={r.st.cur} max={max} c={t.c} c2={t.c2} delay={i * 60} label={`${r.p.title}: ${r.st.cur} threads`} />
-              <span className="w-14 text-right font-mono text-[11px]" style={{ color: TREND[r.st.label].ink }}>{TREND[r.st.label].glyph} {r.st.cur - r.st.prev > 0 ? '+' : ''}{r.st.cur - r.st.prev}</span>
             </li>
           ); })}
         </ul>
-        <div className="flex flex-wrap gap-3 border-t border-line pt-3">{Object.keys(CATS).map((c) => <span key={c} className="inline-flex items-center gap-1.5 text-[11px] text-muted"><Glyph kind={CAT_STYLE[c].glyph} color={CAT_STYLE[c].c} size={10} />{CATS[c]}</span>)}</div>
-      </>) : <p className="text-[13px] text-muted">No pain threads this week yet.</p>}
-    </section>
+        <div className="flex flex-wrap gap-3 border-t border-line pt-3">{Object.keys(CATS).map((c) => <span key={c} className="inline-flex items-center gap-1.5 text-[11px] text-muted"><Glyph kind={CAT_STYLE[c].glyph} color={CAT_STYLE[c].c2} size={10} />{CATS[c]}</span>)}</div>
+      </>) : <p className="text-[13px] text-muted">No complaints this week yet.</p>}
+    </Panel>
+  );
+}
+
+function ActScatter({ rows, onPick }) {
+  const pts = rows.filter((r) => r.st.cur > 0 || r.st.mean > 0).map((r) => ({ id: r.p.id, label: r.p.title, x: r.st.cur, y: Math.max(-3, Math.min(5, r.st.z)), c: CAT_STYLE[r.p.cat].c2 }));
+  const xm = Math.max(4, ...pts.map((q) => q.x));
+  const hot = pts.filter((p) => p.y >= 1 && p.x >= Math.round(Math.ceil(xm * 1.12) / 2)).length;
+  return (
+    <Panel n={3} title="Spiking vs. normal" right={<span className="font-mono text-[10.5px] text-faint">click a dot</span>} body="grid content-start gap-3 p-6">
+      <div className="flex flex-wrap items-baseline gap-2"><span className="font-mono text-[36px] font-semibold leading-none" style={{ color: hot ? 'var(--alert-ink)' : undefined }}>{hot}</span><span className="text-[13px] text-muted">{hot === 1 ? 'problem is' : 'problems are'} both big and unusual</span></div>
+      <p className="text-[12px] text-faint">Further right = more threads. Higher = further above its usual weekly level.</p>
+      {pts.length ? <Scatter points={pts} xLabel="Threads this week" yLabel="Above normal" onPick={onPick} /> : <p className="text-[13px] text-muted">No complaints in the last five weeks.</p>}
+    </Panel>
   );
 }
 
 function TopicRings({ rows }) {
   const tot = sum(rows.map((r) => r.st.cur));
   const by = Object.keys(CATS).map((c) => ({ c, v: sum(rows.filter((r) => r.p.cat === c).map((r) => r.st.cur)) }));
-  const lead = [...by].sort((a, b) => b.v - a.v)[0];
   return (
-    <section className="card grid min-w-0 content-start gap-4 p-6">
-      <PanelLabel n={6}>Topic share</PanelLabel>
-      {tot ? (<>
-        <div className="flex items-baseline gap-2"><span className="font-mono text-[44px] font-semibold leading-none">{Math.round((lead.v / tot) * 100)}</span><span className="text-[13px] text-faint">% in {CATS[lead.c]}</span></div>
+    <Panel n={6} title="By topic" body="grid content-start gap-4 p-6">
+      {tot ? (
         <div className="grid grid-cols-2 gap-4">
           {by.map(({ c, v }) => (
             <div key={c} className="grid justify-items-center gap-1">
               <Ring value={Math.round((v / tot) * 100)} c={CAT_STYLE[c].c} c2={CAT_STYLE[c].c2} size={84} stroke={10} />
-              <span className="inline-flex items-center gap-1.5 text-center text-[11.5px] text-muted"><Glyph kind={CAT_STYLE[c].glyph} color={CAT_STYLE[c].c} size={10} />{CATS[c]}</span>
+              <span className="inline-flex items-center gap-1.5 text-center text-[11.5px] text-muted"><Glyph kind={CAT_STYLE[c].glyph} color={CAT_STYLE[c].c2} size={10} />{CATS[c]}</span>
               <span className="font-mono text-[10.5px] text-faint">{v} threads</span>
             </div>
           ))}
         </div>
-      </>) : <p className="text-[13px] text-muted">No pain threads this week yet.</p>}
-    </section>
+      ) : <p className="text-[13px] text-muted">No complaints this week yet.</p>}
+    </Panel>
   );
 }
 
-function SignalFlow({ rows, failed }) {
-  const srcs = SOURCES.filter((s) => !failed.includes(s));
-  const cols = useMemo(() => {
-    const sN = srcs.map((s) => ({ id: s, label: SOURCE_NAMES[s], c: SRC[s].c, value: sum(rows.map((r) => r.p.bySource[s]?.[7] || 0)) })).filter((n) => n.value > 0);
-    const cN = Object.keys(CATS).map((c) => ({ id: `c-${c}`, label: CATS[c], c: CAT_STYLE[c].c, value: sum(rows.filter((r) => r.p.cat === c).map((r) => sum(srcs.map((s) => r.p.bySource[s]?.[7] || 0)))) })).filter((n) => n.value > 0);
-    const tN = Object.keys(TREND).map((t) => ({ id: `t-${t}`, label: TREND[t].word, c: TREND[t].c, value: sum(rows.filter((r) => r.st.label === t).map((r) => sum(srcs.map((s) => r.p.bySource[s]?.[7] || 0)))) })).filter((n) => n.value > 0);
-    return [sN, cN, tN];
-  }, [rows, srcs.join()]); // eslint-disable-line react-hooks/exhaustive-deps
-  const links = useMemo(() => {
-    const out = [];
-    for (const s of srcs) for (const c of Object.keys(CATS)) {
-      const v = sum(rows.filter((r) => r.p.cat === c).map((r) => r.p.bySource[s]?.[7] || 0));
-      if (v) out.push({ from: s, to: `c-${c}`, value: v, c: SRC[s].c, root: s });
-    }
-    for (const c of Object.keys(CATS)) for (const t of Object.keys(TREND)) for (const s of srcs) {
-      const v = sum(rows.filter((r) => r.p.cat === c && r.st.label === t).map((r) => r.p.bySource[s]?.[7] || 0));
-      if (v) out.push({ from: `c-${c}`, to: `t-${t}`, value: v, c: SRC[s].c, root: s });
-    }
-    return out;
-  }, [rows, srcs.join()]); // eslint-disable-line react-hooks/exhaustive-deps
-  const total = sum(cols[0].map((n) => n.value));
+/* who is talking about what: one stacked bar per topic, split by platform */
+function TalkMap({ rows, failed, platforms }) {
+  const srcs = SOURCES.filter((s) => !failed.includes(s) && platforms.find((p) => p.id === s)?.state !== 'off');
+  const data = Object.keys(CATS).map((c) => {
+    const mine = rows.filter((r) => r.p.cat === c);
+    const parts = srcs.map((s) => ({ s, v: sum(mine.map((r) => r.p.bySource[s]?.[7] || 0)) }));
+    const spiking = mine.filter((r) => r.st.label === 'Spike' || r.st.label === 'Climbing').length;
+    return { c, parts, total: sum(parts.map((x) => x.v)), spiking };
+  }).sort((a, b) => b.total - a.total);
+  const max = Math.max(1, ...data.map((d) => d.total));
   return (
-    <section className="card grid min-w-0 content-start gap-4 p-6">
-      <PanelLabel n={7} right={<span className="hidden font-mono text-[10.5px] text-faint sm:inline">hover a node to trace it</span>}>Signal flow</PanelLabel>
-      <div className="flex items-baseline gap-2"><span className="font-mono text-[44px] font-semibold leading-none">{total}</span><span className="text-[13px] text-faint">pain threads · community → topic → signal</span></div>
-      {total ? <Sankey cols={cols} links={links} colLabels={['Community', 'Topic', 'Signal']} /> : <p className="text-[13px] text-muted">No pain threads this week yet.</p>}
-    </section>
+    <Panel n={8} title="Who is talking about what" right={<span className="font-mono text-[10.5px] text-faint">threads this week, by platform</span>} body="grid content-start gap-4 p-6">
+      <ul className="grid gap-4">
+        {data.map((d) => (
+          <li key={d.c} className="grid gap-1.5 sm:grid-cols-[200px_1fr_120px] sm:items-center sm:gap-4">
+            <span className="flex items-center gap-2 text-[13px]"><Glyph kind={CAT_STYLE[d.c].glyph} color={CAT_STYLE[d.c].c2} />{CATS[d.c]}</span>
+            <div className="flex h-5 overflow-hidden rounded-full bg-track" role="img" aria-label={`${CATS[d.c]}: ${d.parts.map((x) => `${SOURCE_NAMES[x.s]} ${x.v}`).join(', ')}`}>
+              {d.parts.filter((x) => x.v).map((x) => (
+                <i key={x.s} className="grow-in block h-full first:rounded-l-full last:rounded-r-full" title={`${SOURCE_NAMES[x.s]}: ${x.v}`} style={{ width: `${(x.v / max) * 100}%`, background: `linear-gradient(90deg, ${SRC[x.s].c}, ${SRC[x.s].c2})`, boxShadow: 'inset -2px 0 0 var(--surface)' }} />
+              ))}
+            </div>
+            <span className="flex items-baseline justify-between gap-2 sm:justify-end"><b className="font-mono text-[15px]">{d.total}</b>{d.spiking > 0 && <span className="font-mono text-[10.5px] text-alert-ink">▲ {d.spiking} rising</span>}</span>
+          </li>
+        ))}
+      </ul>
+      <div className="flex flex-wrap gap-4 border-t border-line pt-3">{srcs.map((s) => <span key={s} className="inline-flex items-center gap-1.5 text-[11.5px] text-muted"><SrcDot s={s} />{SOURCE_NAMES[s]}</span>)}</div>
+    </Panel>
   );
 }
 
-function SourceMix({ rows, failed }) {
+function SourceMix({ rows, failed, platforms }) {
   const [span, setSpan] = useState('week');
   const idx = span === 'week' ? [7] : span === '4w' ? [4, 5, 6, 7] : [0, 1, 2, 3, 4, 5, 6, 7];
-  const parts = SOURCES.map((s) => ({ id: s, label: SOURCE_NAMES[s], c: SRC[s].c, c2: SRC[s].c2, value: failed.includes(s) ? 0 : sum(rows.map((r) => sum(idx.map((i) => r.p.bySource[s]?.[i] || 0)))) }));
+  const state = (s) => platforms.find((p) => p.id === s)?.state;
+  const parts = SOURCES.map((s) => ({ id: s, label: SOURCE_NAMES[s], c: SRC[s].c, c2: SRC[s].c2, value: failed.includes(s) || state(s) === 'off' ? 0 : sum(rows.map((r) => sum(idx.map((i) => r.p.bySource[s]?.[i] || 0)))) }));
   const total = sum(parts.map((p) => p.value));
   return (
-    <section className="card grid min-w-0 content-start gap-4 p-6">
-      <PanelLabel n={8}>Source mix</PanelLabel>
+    <Panel n={7} title="By platform" body="grid content-start gap-4 p-6">
       <Tabs value={span} onChange={setSpan} label="Time span" options={[['week', 'Week'], ['4w', '4 weeks'], ['8w', '8 weeks']]} />
       <div className="grid items-center justify-items-center gap-4 sm:grid-cols-[auto_1fr] sm:justify-items-start">
-        <ThinDonut parts={parts} total={total} size={160} centerLabel="pain threads" />
+        <ThinDonut parts={parts} total={total} size={156} centerLabel="complaints" />
         <ul className="grid w-full gap-2">
-          {parts.map((p) => { const down = failed.includes(p.id); return (
-            <li key={p.id} className={`flex items-center justify-between gap-2 text-[12.5px] ${down ? 'rounded-full border border-dashed border-alert/50 px-2 py-0.5' : ''}`}>
-              <span className="flex min-w-0 items-center gap-2"><SrcDot s={p.id} /><span className={down ? 'text-alert-ink' : ''}>{p.label}</span></span>
-              <span className={`font-mono text-[12px] ${down ? 'text-alert-ink' : 'text-ink'}`}>{down ? 'down' : p.value}</span>
+          {platforms.map((p) => { const part = parts.find((x) => x.id === p.id); return (
+            <li key={p.id} className="flex items-center justify-between gap-2 text-[12.5px]" title={p.why}>
+              <span className="flex min-w-0 items-center gap-2">{p.state === 'live' ? <SrcDot s={p.id} /> : <i className="h-2 w-2 rounded-full border-[1.5px] border-faint" />}<span className={p.state === 'live' ? '' : 'text-faint'}>{p.name}</span></span>
+              <span className={`font-mono text-[12px] ${p.state === 'down' ? 'text-alert-ink' : p.state === 'live' ? 'text-ink' : 'text-faint'}`}>{p.state === 'live' ? part.value : P_STATE[p.state].w}</span>
             </li>
           ); })}
         </ul>
       </div>
-    </section>
-  );
-}
-
-function ActScatter({ rows, onPick }) {
-  const pts = rows.filter((r) => r.st.cur > 0 || r.st.mean > 0).map((r) => ({ id: r.p.id, label: r.p.title, x: r.st.cur, y: Math.max(-3, Math.min(5, r.st.z)), c: CAT_STYLE[r.p.cat].c }));
-  const hot = pts.filter((p) => p.y >= 1 && p.x >= Math.max(4, Math.max(...pts.map((q) => q.x), 0) / 2)).length;
-  return (
-    <section className="card grid min-w-0 content-start gap-4 p-6">
-      <PanelLabel n={9} right={<span className="font-mono text-[10.5px] text-faint">click a dot for threads</span>}>Volume × unusualness</PanelLabel>
-      <div className="flex items-baseline gap-2"><span className="font-mono text-[44px] font-semibold leading-none" style={{ color: hot ? 'var(--alert-ink)' : undefined }}>{hot}</span><span className="text-[13px] text-faint">in the act-now corner</span></div>
-      {pts.length ? <Scatter points={pts} xLabel="Threads this week" yLabel="Unusualness (z)" onPick={onPick} /> : <p className="text-[13px] text-muted">No pain threads in the last five weeks.</p>}
-    </section>
+    </Panel>
   );
 }
 
 /* ── connections: one gauge component and one threshold scale everywhere ── */
 function connRows(data, healthInfo) {
   const lr = data?.lastRun; const hist = healthInfo?.history || [];
+  const plats = platformStates(data, healthInfo);
   const avg = (vals) => { const v = vals.filter((x) => x != null); return v.length ? Math.round(sum(v) / v.length) : null; };
   const nr = nextRun();
   const rows = SOURCES.map((s) => {
     const series = hist.map((h) => h.sources?.[s] ?? null);
     const st = lr?.stats?.sources?.[s];
+    const off = plats.find((x) => x.id === s)?.state === 'off';
+    if (off) return { id: s, src: s, off: true, name: SOURCE_NAMES[s], tile: SRC[s], health: null, series: [], cadence: '—', err: null, meta: OFF_WHY[s] };
     return { id: s, src: s, name: SOURCE_NAMES[s], tile: SRC[s], health: avg(series), series, cadence: 'FRI 06:00 IST + MANUAL', next: nr, err: st && !st.ok && st.failed ? st.error || 'not responding' : null, meta: st ? `${st.fetched} fetched last run` : 'not run yet' };
   });
+  rows.push({ id: 'discord', off: true, name: 'Discord', tile: { c: '#4A57E6', c2: '#8E98FF', abbr: 'DC' }, health: null, series: [], cadence: '—', err: null, meta: OFF_WHY.discord });
+  rows.push({ id: 'x', off: true, name: 'X (Twitter)', tile: { c: '#B4B4C6', c2: '#F2F2F7', abbr: 'X' }, health: null, series: [], cadence: '—', err: null, meta: OFF_WHY.x });
   const gSeries = hist.map((h) => h.gemini);
   const gem = lr?.stats?.gemini;
   rows.push({ id: 'gemini', name: 'Gemini Flash', tile: { c: '#8E98FF', c2: '#C9CDF5', abbr: 'GM' }, health: avg(gSeries) ?? (healthInfo?.gemini?.configured ? null : 0), series: gSeries, cadence: 'EACH RUN', err: gem && !gem.ok ? gem.error : !healthInfo?.gemini?.configured && healthInfo ? 'API key missing' : null, meta: gem?.model || 'labels + summaries' });
@@ -559,23 +605,22 @@ const ConnTile = ({ t }) => <span className="grid h-9 w-9 shrink-0 place-items-c
 function Connections({ data, healthInfo, compact, srcSel, toggleSrc, n = 10 }) {
   const rows = connRows(data, healthInfo);
   const down = data?.lastRun?.stats?.failedSources || [];
-  const overall = (() => { const v = rows.map((r) => r.health).filter((x) => x != null); return v.length ? Math.round(sum(v) / v.length) : null; })();
+  const overall = (() => { const v = rows.filter((r) => !r.off).map((r) => r.health).filter((x) => x != null); return v.length ? Math.round(sum(v) / v.length) : null; })();
   return (
-    <section className="card grid min-w-0 content-start gap-4 p-6">
-      <PanelLabel n={n} right={<StatusDot color={healthTone(overall).c} word={healthTone(overall).word} live={overall >= 85} />}>Connections</PanelLabel>
+    <Panel n={n} title="Connections" right={<StatusDot color={healthTone(overall).c} word={healthTone(overall).word} live={overall >= 85} />} body="grid content-start gap-4 p-6">
       <div className="overflow-x-auto">
         <table className="w-full min-w-[560px] text-left">
           <thead><tr className="font-mono text-[10px] uppercase tracking-[.1em] text-faint">
             <th className="pb-2 font-normal">Service</th><th className="pb-2 font-normal">Health</th>{!compact && <th className="pb-2 font-normal">Last 14 runs</th>}<th className="pb-2 font-normal">Cadence</th>{!compact && <th className="pb-2 text-right font-normal">In brief</th>}
           </tr></thead>
           <tbody>
-            {rows.map((r) => { const t = healthTone(r.health); const isDown = r.src && down.includes(r.src); const on = r.src ? srcSel?.includes(r.src) && !isDown : null; return (
+            {rows.map((r) => { const t = healthTone(r.health); const isDown = r.src && (down.includes(r.src) || r.off); const on = r.src ? srcSel?.includes(r.src) && !isDown : null; return (
               <tr key={r.id} className="border-t border-line">
-                <td className="py-3 pr-3"><div className="flex items-center gap-3"><ConnTile t={r.tile} /><div className="min-w-0"><div className="text-[13px] font-medium">{r.name}</div>{r.err ? <div className="max-w-[260px] truncate text-[11px] text-alert-ink" title={r.err}>{r.err}</div> : <div className="text-[11px] text-faint">{r.meta}</div>}</div></div></td>
-                <td className="py-3 pr-3"><div className="flex items-center gap-2"><Ring value={r.health} ticked size={52} stroke={8} label={null} /><StatusDot color={t.ink} word={t.word} /></div></td>
-                {!compact && <td className="py-3 pr-3">{r.series.length ? <Spark values={r.series} color={t.c} w={110} h={26} /> : <span className="font-mono text-[10.5px] text-faint">live check</span>}</td>}
+                <td className="py-3 pr-3"><div className="flex items-center gap-3"><ConnTile t={r.tile} /><div className="min-w-0"><div className="text-[13px] font-medium">{r.name}</div>{r.err ? <div className="max-w-[260px] truncate text-[11px] text-alert-ink" title={r.err}>{r.err}</div> : <div className="max-w-[300px] text-[11px] text-faint">{r.meta}</div>}</div></div></td>
+                <td className="py-3 pr-3">{r.off ? <StatusDot color="var(--faint)" word="Not connected" /> : <div className="flex items-center gap-2"><Ring value={r.health} ticked size={52} stroke={8} label={null} /><StatusDot color={t.ink} word={t.word} /></div>}</td>
+                {!compact && <td className="py-3 pr-3">{r.off ? null : r.series.length ? <Spark values={r.series} color={t.c} w={110} h={26} /> : <span className="font-mono text-[10.5px] text-faint">live check</span>}</td>}
                 <td className="py-3 pr-3"><div className="font-mono text-[10.5px] text-muted">{r.cadence}</div>{r.next && <div className="mt-1 grid w-[120px] gap-1"><Capsule value={Math.round(r.next.frac * 100)} max={100} c="#0A1686" c2="#8E98FF" h={6} label={`next run in ${r.next.left}`} /><span className="font-mono text-[10px] text-faint">next in {r.next.left}</span></div>}</td>
-                {!compact && <td className="py-3 text-right">{r.src ? (
+                {!compact && <td className="py-3 text-right">{r.src && !r.off ? (
                   <button role="switch" aria-checked={on} disabled={isDown} title={isDown ? `${r.name} did not respond in the last run, so it is left out` : undefined} aria-label={`Include ${r.name} in the brief`} onClick={() => toggleSrc(r.src)} className={`relative inline-flex h-6 w-11 rounded-full transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${on ? 'bg-[linear-gradient(90deg,#1E8F6B,#46C59A)]' : 'bg-track'}`}>
                     <span className={`absolute top-0.5 h-5 w-5 rounded-full bg-ink transition-[left] ${on ? 'left-[22px]' : 'left-0.5'}`} />
                   </button>) : <span className="font-mono text-[10.5px] text-faint">—</span>}</td>}
@@ -584,8 +629,8 @@ function Connections({ data, healthInfo, compact, srcSel, toggleSrc, n = 10 }) {
           </tbody>
         </table>
       </div>
-      <p className="font-mono text-[10.5px] text-faint">Health = share of requests answered over the last 14 runs · ≥85 stable · 60–84 degraded · &lt;60 down{!compact ? ' · switches include or leave out a community in this view' : ''}</p>
-    </section>
+      <p className="font-mono text-[10.5px] text-faint">Health = share of requests answered over the last 14 runs · ≥85 stable · 60–84 degraded · &lt;60 down{!compact ? ' · switches include or leave out a platform in this view' : ''}</p>
+    </Panel>
   );
 }
 
@@ -597,8 +642,7 @@ function TrendChart({ rows, weeks }) {
   const toggle = (id) => setPicked((cur) => { const base = cur || ids; return base.includes(id) ? base.filter((x) => x !== id) : [...base, id].slice(-4); });
   const series = ids.map((id, i) => { const r = rows.find((x) => x.p.id === id); return r && { id, label: r.p.title, short: r.p.title.split(' ').slice(0, 4).join(' '), values: r.p.s, color: SERIES_COLORS[i % 4] }; }).filter(Boolean);
   return (
-    <section className="card grid min-w-0 gap-4 p-6">
-      <PanelLabel n={1} right={<span className="hidden text-[11.5px] text-faint sm:inline">Pick up to 4 · hover a week for exact counts</span>}>Eight-week view</PanelLabel>
+    <Panel n={1} title="Eight-week view" right={<span className="hidden text-[11.5px] text-faint sm:inline">Pick up to 4 · hover a week for exact counts</span>} body="grid min-w-0 gap-4 p-6">
       <h2 className="text-[20px] font-semibold">How the conversation is moving</h2>
       <div className="flex flex-wrap gap-1.5" role="group" aria-label="Pain points shown on chart">
         {ranked.map((r) => { const on = ids.includes(r.p.id); const i = ids.indexOf(r.p.id); return (
@@ -608,17 +652,16 @@ function TrendChart({ rows, weeks }) {
         ); })}
       </div>
       {series.length ? <FlowChart series={series} labels={weeks.map(d8)} /> : <p className="py-10 text-center text-muted">Pick a pain point above to plot it.</p>}
-    </section>
+    </Panel>
   );
 }
 
 function ActivityHeatmap({ rows, weeks, onPick }) {
   const list = [...rows].sort((a, b) => sum(b.p.s) - sum(a.p.s));
   return (
-    <section className="card grid min-w-0 gap-4 p-6">
-      <PanelLabel n={2} right={<span className="hidden font-mono text-[10.5px] text-faint sm:inline">colour = topic · intensity = threads</span>}>Activity · 8 weeks</PanelLabel>
+    <Panel n={2} title="Activity · 8 weeks" right={<span className="hidden font-mono text-[10.5px] text-faint sm:inline">colour = topic · intensity = threads</span>} body="grid min-w-0 gap-4 p-6">
       <Heatmap rows={list.map((r) => ({ id: r.p.id, label: r.p.title, values: r.p.s, c: CAT_STYLE[r.p.cat].c, glyph: CAT_STYLE[r.p.cat].glyph }))} cols={weeks.map(d8)} onPick={onPick} />
-    </section>
+    </Panel>
   );
 }
 
@@ -655,7 +698,7 @@ function Detail({ p, st, inList, addShort, openDraft, dismiss, weeks }) {
           <Def t="Our angle" d={p.angle} />
         </dl>
         <div className="flex flex-wrap gap-2">
-          <Btn size="sm" kind={inList ? 'secondary' : 'primary'} disabled={inList} onClick={() => addShort(p.id)}>{inList ? 'On shortlist ✓' : 'Add to shortlist'}</Btn>
+          <Btn size="sm" kind={inList ? 'secondary' : 'primary'} disabled={inList} onClick={() => addShort(p.id)}>{inList ? 'In team vote ✓' : 'Put to team vote'}</Btn>
           <Btn size="sm" onClick={() => openDraft([p.id])}>Draft sprint brief</Btn>
           <Btn size="sm" kind="danger" onClick={() => dismiss(p.id)}>Not our problem, hide</Btn>
         </div>
@@ -689,14 +732,15 @@ function Detail({ p, st, inList, addShort, openDraft, dismiss, weeks }) {
 }
 
 function Leaderboard(props) {
-  const { rows, total, failed, extraIfLooser, mode, setMode, cat, setCat, srcSel, toggleSrc, sort, setSort, cmp, setCmp, open, setOpen, clearFilters, shortIds, addShort, openDraft, dismiss, hiddenCount, showHidden, setShowHidden, weeks } = props;
+  const { rows, total, failed, platforms = [], extraIfLooser, mode, setMode, cat, setCat, srcSel, toggleSrc, sort, setSort, cmp, setCmp, open, setOpen, clearFilters, shortIds, addShort, openDraft, dismiss, hiddenCount, showHidden, setShowHidden, weeks } = props;
   const filtersOn = cat !== 'all' || srcSel.length !== SOURCES.length || mode !== 'balanced';
   const maxCur = Math.max(4, ...rows.map((r) => r.st.cur));
   return (
-    <section id="board" className="card min-w-0 overflow-hidden">
+    <section id="board" className="grid min-w-0 gap-3">
+      <PanelLabel n={3}>All tracked problems · {rows.length} of {total}</PanelLabel>
+      <div className="card min-w-0 overflow-hidden">
       <div className="grid gap-4 border-b border-line px-6 py-5">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <PanelLabel n={3}>All tracked pain points · {rows.length} of {total}</PanelLabel>
+        <div className="flex flex-wrap items-center justify-end gap-3">
           <div className="flex rounded-full border border-line p-[3px]" role="group" aria-label="Compare this week against">
             {[['wow', 'vs last week'], ['base', 'vs 4-week normal']].map(([k, l]) => <button key={k} onClick={() => setCmp(k)} aria-pressed={cmp === k} className={seg(cmp === k)}>{l}</button>)}
           </div>
@@ -719,9 +763,9 @@ function Leaderboard(props) {
           </div>
           <span className="font-mono text-[10.5px] uppercase tracking-[.1em] text-faint">Sources</span>
           <div className="flex flex-wrap items-center gap-1.5" role="group" aria-label="Sources">
-            {SOURCES.map((s) => { const down = failed.includes(s); const on = srcSel.includes(s) && !down; return (
-              <button key={s} disabled={down} aria-pressed={on} onClick={() => toggleSrc(s)} title={down ? `${SOURCE_NAMES[s]} did not respond in the last run` : undefined}
-                className={down ? 'inline-flex h-7 cursor-not-allowed items-center gap-1.5 rounded-full border-[1.5px] border-dashed border-alert/60 px-3 text-[11.5px] text-alert-ink' : `${chip(on)} ${on ? '' : 'line-through'}`}><SrcDot s={s} size={7} />{SOURCE_NAMES[s]}{down ? ' · unavailable' : ''}</button>
+            {SOURCES.map((s) => { const pl = platforms.find((x) => x.id === s); const off = pl?.state === 'off'; const down = failed.includes(s); const on = srcSel.includes(s) && !down && !off; return (
+              <button key={s} disabled={down || off} aria-pressed={on} onClick={() => toggleSrc(s)} title={pl?.why}
+                className={down ? 'inline-flex h-7 cursor-not-allowed items-center gap-1.5 rounded-full border-[1.5px] border-dashed border-alert/60 px-3 text-[11.5px] text-alert-ink' : off ? 'inline-flex h-7 cursor-not-allowed items-center gap-1.5 rounded-full border-[1.5px] border-dashed border-line px-3 text-[11.5px] text-faint' : `${chip(on)} ${on ? '' : 'line-through'}`}><SrcDot s={s} size={7} />{SOURCE_NAMES[s]}{down ? ' · not responding' : off ? ' · not connected' : ''}</button>
             ); })}
             <label htmlFor="sort" className="sr-only">Sort by</label>
             <select id="sort" value={sort} onChange={(e) => setSort(e.target.value)} className="ml-auto h-8 rounded-full border-[1.5px] border-line-strong bg-transparent px-3.5 text-[11.5px] text-ink">
@@ -742,14 +786,12 @@ function Leaderboard(props) {
           </div>
         )}
         {failed.length > 0 && (
-          <div className="rounded-[12px] border border-dashed border-alert/50 px-3 py-2 text-[12.5px]" role="status">
-            <b className="text-alert-ink">{failed.map((f) => SOURCE_NAMES[f]).join(', ')} didn't respond in the last run.</b> {failed.length > 1 ? 'They are' : 'It is'} left out of every week below, so the trends still compare like for like.
-          </div>
+          <StatusDot color="var(--alert)" word={`${failed.map((f) => SOURCE_NAMES[f]).join(', ')} did not respond, so it is left out of every week`} />
         )}
       </div>
       {rows.length === 0 ? (
         <div className="px-6 py-10 text-center text-muted">
-          {srcSel.length === 0 ? 'Pick at least one source to see pain points.' : 'No pain point matches these filters.'} <button onClick={clearFilters} className="text-link underline underline-offset-2">Clear filters</button>
+          {srcSel.length === 0 ? 'Pick at least one platform to see problems.' : 'No problem matches these filters.'} <button onClick={clearFilters} className="text-link underline underline-offset-2">Clear filters</button>
         </div>
       ) : (
         <div className="overflow-x-auto">
@@ -777,7 +819,7 @@ function Leaderboard(props) {
                       <td className="px-5 py-3 align-middle font-mono text-[11px] text-faint">{String(i + 1).padStart(2, '0')}</td>
                       <td className="min-w-0 px-2 py-3 align-middle">
                         <button onClick={(e) => { e.stopPropagation(); setOpen(isOpen ? null : p.id); }} aria-expanded={isOpen} className="text-left text-[13px] font-medium hover:underline">{p.title}</button>
-                        <div className="mt-1 flex flex-wrap items-center gap-2 text-[11px] text-faint"><RelTag rel={p.rel} /><span className="font-mono">{p.voices} dev · {p.communities} comm</span>{shortIds.includes(p.id) && <StatusDot color="var(--ok)" word="Shortlisted" />}</div>
+                        <div className="mt-1 flex flex-wrap items-center gap-2 text-[11px] text-faint"><RelTag rel={p.rel} /><span className="font-mono">{p.voices} dev · {p.communities} comm</span>{shortIds.includes(p.id) && <StatusDot color="var(--ok)" word="In team vote" />}</div>
                       </td>
                       <td className="px-2 py-3 align-middle"><TopicPill cat={p.cat} /></td>
                       <td className="px-2 py-3 text-right align-middle">
@@ -815,6 +857,7 @@ function Leaderboard(props) {
         <span>Threads are unique threads per week across sources. "Signal" compares this week with the 4-week normal, so a big % change on small numbers stays Steady.</span>
         {hiddenCount > 0 && <button onClick={() => setShowHidden(!showHidden)} className="text-link underline underline-offset-2">{showHidden ? 'Hide dismissed' : `${hiddenCount} dismissed · show`}</button>}
       </div>
+      </div>
     </section>
   );
 }
@@ -847,9 +890,11 @@ function Watchlist({ terms, termsError, reload, toast, candidates }) {
   const flip = async (x) => { try { await api('watchlist', { op: 'flip', id: x.id }); await reload(); } catch (e) { toast(e.message); } };
   const incl = terms.filter((x) => x.kind === 'include'), excl = terms.filter((x) => x.kind === 'exclude');
   return (
-    <section className="card min-w-0 overflow-hidden">
+    <section className="grid min-w-0 gap-3">
+      <PanelLabel n={1}>What Pulse listens for</PanelLabel>
+      <div className="card min-w-0 overflow-hidden">
       <div className="grid gap-4 border-b border-line px-6 py-5 md:grid-cols-[1fr_auto] md:items-end">
-        <div className="grid gap-2"><PanelLabel n={1}>What Pulse listens for</PanelLabel><h2 className="text-[20px] font-semibold">Topics & keywords</h2><span className="text-[12px] text-faint">Saved in Neon · used by every run · no code changes needed</span></div>
+        <div className="grid gap-2"><h2 className="text-[20px] font-semibold">Topics & keywords</h2><span className="text-[12px] text-faint">Saved in Neon · used by every run · no code changes needed</span></div>
         <div className="flex gap-6">
           {[['tracked', incl.length], ['excluded', excl.length], ['new', terms.filter((x) => x.fresh).length]].map(([k, v]) => <div key={k}><div className="font-mono text-[28px] font-semibold leading-none">{v}</div><div className="font-mono text-[10px] uppercase tracking-[.1em] text-faint">{k}</div></div>)}
         </div>
@@ -916,11 +961,12 @@ function Watchlist({ terms, termsError, reload, toast, candidates }) {
       )}
       {candidates?.length > 0 && (
         <div className="border-t border-line px-6 py-4 text-[12.5px]">
-          <div className="font-medium">New pain Gemini found that fits none of your pain points (last 4 weeks)</div>
+          <div className="font-medium">New problems Gemini found that fit none of your tracked ones (last 4 weeks)</div>
           <ul className="mt-2 flex flex-wrap gap-2">{candidates.map((c) => <li key={c.label}><a className="inline-flex h-7 items-center gap-1.5 rounded-full border border-line px-3 text-link hover:border-line-strong" href={c.url} target="_blank" rel="noopener noreferrer">{c.label} <span className="font-mono text-faint">{c.n}</span></a></li>)}</ul>
         </div>
       )}
       <p className="border-t border-line px-6 py-3 text-[11.5px] text-faint">The number on each term is how many threads it matched in the last 4 weeks. Terms marked new (amber outline) are searched across all 8 weeks on the next run, so adding a term never shows up as a fake spike. Dashed red terms with − are excluded; click any term to switch. Removing a term stops new matches but keeps past threads.</p>
+      </div>
     </section>
   );
 }
@@ -945,8 +991,7 @@ function EmailDelivery({ week }) {
     : `Fridays ~06:30 IST to ${info.recipients} recipient${info.recipients > 1 ? 's' : ''}`;
   const tone = !info ? null : info.error || (last && last.status !== 'sent') ? 'var(--alert)' : info.configured ? 'var(--ok)' : 'var(--warn)';
   return (
-    <section className="card grid content-start gap-3 p-6">
-      <PanelLabel n={3} right={tone && <StatusDot color={tone} word={info?.configured ? 'Email on' : 'Email off'} />}>Delivery</PanelLabel>
+    <Panel n={3} title="Delivery" right={tone && <StatusDot color={tone} word={info?.configured ? 'Email on' : 'Email off'} />} body="grid content-start gap-3 p-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="min-w-0 text-[13px]">
           <div className="font-medium">Email delivery</div>
@@ -958,7 +1003,7 @@ function EmailDelivery({ week }) {
         </Btn>
       </div>
       {state.msg && !state.busy && <p role="status" className={`text-[12px] ${state.bad ? 'text-warn' : 'text-ok'}`}>{state.msg}</p>}
-    </section>
+    </Panel>
   );
 }
 
@@ -974,8 +1019,7 @@ function SystemView({ data, healthInfo, srcSel, toggleSrc }) {
   const stale = lr && Date.now() - new Date(lr.startedAt).getTime() > 8 * 864e5;
   return (
     <div className="grid gap-4">
-      <section className="card grid gap-4 p-6">
-        <PanelLabel n={1} right={lr && <StatusDot color={stale ? 'var(--alert)' : 'var(--ok)'} word={`Refreshed ${ago(lr.startedAt)}`} />}>How a brief gets made</PanelLabel>
+      <Panel n={1} title="How a brief gets made" right={lr && <StatusDot color={stale ? 'var(--alert)' : 'var(--ok)'} word={`Refreshed ${ago(lr.startedAt)}`} />} body="grid gap-4 p-6">
         <ol className="grid gap-3 sm:grid-cols-4">
           {stages.map(([k, d, ok], i) => (
             <li key={k} className="rounded-[12px] border border-line bg-surface-2 p-4">
@@ -984,29 +1028,27 @@ function SystemView({ data, healthInfo, srcSel, toggleSrc }) {
             </li>
           ))}
         </ol>
-      </section>
+      </Panel>
       <Connections data={data} healthInfo={healthInfo} srcSel={srcSel} toggleSrc={toggleSrc} n={2} />
       <div className="grid gap-4 lg:grid-cols-2">
         <EmailDelivery week={data?.week} />
-        <section className="card grid content-start gap-3 p-6 text-[13px]">
-          <PanelLabel n={4}>Schedule</PanelLabel>
+        <Panel n={4} title="Schedule" body="grid content-start gap-3 p-6 text-[13px]">
           {[['Scheduled run', `Fridays 06:00 IST · last: ${data?.lastCron ? `${ist(data.lastCron.started_at)} (${data.lastCron.status})` : 'not yet (first one this Friday)'}`], ['Next run', `in ${nextRun().left}`], ['Daily health check', 'emails an alert if the database or Gemini fails']].map(([k, v]) => (
             <div key={k} className="flex justify-between gap-3 border-b border-line pb-2 last:border-0"><span>{k}</span><span className="text-right font-mono text-[11.5px] text-muted">{v}</span></div>
           ))}
-        </section>
+        </Panel>
       </div>
-      <details className="card px-6 py-4 text-[13px]" open>
-        <summary className="cursor-pointer font-mono text-[11px] uppercase tracking-[.12em] text-muted">05 · How to read the brief</summary>
-        <dl className="mt-3 grid gap-1.5 md:grid-cols-2">
+      <Panel n={5} title="How to read the brief" body="px-6 py-4 text-[13px]">
+        <dl className="grid gap-1.5 md:grid-cols-2">
           <Def t="Thread" d="one discussion, counted once even if it has 300 comments or is cross-posted." />
           <Def t="Normal" d="the average of the four weeks before this one." />
           <Def t="Unusual spike / Climbing" d="this week is well above normal, beyond the usual week-to-week wobble." />
           <Def t="Steady" d="any change is within normal wobble, even if the % looks big." />
           <Def t="Unsolved" d="share of threads with no accepted answer, fix or closed issue." />
-          <Def t="Debugging noise" d="how-to questions and user errors. Gemini filters these out before counting." />
-          <Def t="Colours" d="sources, topics, trend states and health each have their own colour; the red-orange accent only marks alerts, live states and rises." />
+          <Def t="Genuine complaint" d="a thread describing a real problem. How-to questions and user errors are filtered out by Gemini before counting." />
+          <Def t="Colours" d="platforms, topics, trend states and health each have their own colour; brand red only marks alerts, live states and rises." />
         </dl>
-      </details>
+      </Panel>
     </div>
   );
 }
@@ -1082,7 +1124,7 @@ export default function Dashboard() {
   const shortIds = short.items.map((x) => x.id);
 
   const checked = !!(data && healthInfo) || !!loadError;
-  const aiAt = (data?.pains || []).map((p) => p.insight?.created_at).filter(Boolean).sort().pop();
+  const platforms = platformStates(data, healthInfo);
   const problems = [];
   if (healthInfo && !healthInfo.db?.ok) problems.push('Database not reachable');
   if (failed.length) problems.push(`${failed.map((f) => SOURCE_NAMES[f]).join(', ')} not responding`);
@@ -1092,7 +1134,7 @@ export default function Dashboard() {
     setShortBusy(true);
     try { setShort(await api('shortlist', { ...body, week })); if (msg) toast(msg); } catch (e) { toast(e.message); } finally { setShortBusy(false); }
   };
-  const addShort = (id) => shortAct({ op: 'add', id }, 'Added to the sprint shortlist');
+  const addShort = (id) => shortAct({ op: 'add', id }, 'Put to team vote');
   const dismiss = (id) => { const next = [...dismissed, id]; saveDismissed(next); setOpen(null); toast('Hidden from this brief', () => saveDismissed(next.filter((x) => x !== id))); };
   const focusRow = (id) => { setView('trends'); setCat('all'); setMode('exploratory'); setShowHidden(true); setOpen(id); setTimeout(() => document.getElementById(`row-${id}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' }), 120); };
   const toggleSrc = (s) => setSrcSel((ss) => (ss.includes(s) ? ss.filter((x) => x !== s) : [...ss, s]));
@@ -1162,12 +1204,9 @@ export default function Dashboard() {
             <p className="mt-2 max-w-[80ch] text-[13px] text-muted">
               {loadError ? 'The brief could not be loaded.' : !data ? 'Loading your latest brief: fetching the most recent report from the database…'
                 : data.totalThreads === 0 ? 'No report yet. Run the first brief to collect eight weeks of history.'
-                : <>{data.corpus[7]} threads analysed from {SOURCES.length - failed.length} of {SOURCES.length} communities · data collected <span className="font-mono">{data.lastRun ? ist(data.lastRun.startedAt) : '–'}</span>{aiAt ? <> · AI summaries written <span className="font-mono">{ist(aiAt)}</span></> : ''}</>}
+                : <>{data.corpus[7]} threads read this week · collected <span className="font-mono">{data.lastRun ? ist(data.lastRun.startedAt) : '–'}</span>{data?.lastRun && <span className={stale ? 'text-alert-ink' : ''}> ({ago(data.lastRun.startedAt)})</span>}</>}
             </p>
-          </div>
-          <div className="relative z-[1] flex flex-wrap items-center gap-3">
-            {failed.map((f) => <StatusDot key={f} color="var(--alert)" word={`${SOURCE_NAMES[f]} down`} />)}
-            {data?.lastRun && <StatusDot color={stale ? 'var(--alert)' : 'var(--faint)'} word={`Last run ${ago(data.lastRun.startedAt)}`} />}
+            {data && !loadError && <div className="mt-3"><PlatformStrip platforms={platforms} /></div>}
           </div>
         </div>
 
@@ -1189,52 +1228,47 @@ export default function Dashboard() {
         {empty && view !== 'watchlist' && view !== 'system' && <FirstRun onRun={run} running={running} />}
 
         {data && !empty && view === 'brief' && (<>
-          <KpiRow rows={topPool} data={data} failed={failed} />
-          <ExecSummary rows={topPool} data={data} failed={failed} />
-          <KeyFindings rows={topPool} onEvidence={focusRow} />
-          <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_340px]">
-            <TopCalls rows={topPool} mode={mode} setMode={setMode} shortIds={shortIds} addShort={addShort} openDraft={(ids) => setDraft({ ids })} focusRow={focusRow} onSummarize={summarize} summarizing={summarizing} />
+          <KpiRow rows={topPool} data={data} />
+          <ExecSummary rows={topPool} data={data} failed={failed} onEvidence={focusRow} />
+          <div className="grid gap-4 xl:grid-cols-2">
+            <LoudestBars rows={topPool} onPick={focusRow} />
+            <ActScatter rows={topPool} onPick={focusRow} />
+          </div>
+          <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_360px]">
+            <TopCalls rows={topPool} mode={mode} setMode={setMode} shortItems={short.items} addShort={addShort} openDraft={(ids) => setDraft({ ids })} focusRow={focusRow} onSummarize={summarize} summarizing={summarizing} />
             <Shortlist items={short.items} titles={titles} viewer={viewer} setViewer={setViewer} act={shortAct} busy={shortBusy} openDraft={(ids, pack) => setDraft({ ids, pack })} />
           </div>
-          <div className="grid gap-4 xl:grid-cols-3">
-            <div className="xl:col-span-2"><LoudestBars rows={topPool} onPick={focusRow} /></div>
-            <TopicRings rows={topPool} />
-          </div>
-          <div className="grid gap-4 xl:grid-cols-3">
-            <div className="xl:col-span-2"><SignalFlow rows={topPool} failed={failed} /></div>
-            <SourceMix rows={topPool} failed={failed} />
-          </div>
           <div className="grid gap-4 xl:grid-cols-2">
-            <ActScatter rows={topPool} onPick={focusRow} />
-            <Connections data={data} healthInfo={healthInfo} compact />
+            <TopicRings rows={topPool} />
+            <SourceMix rows={topPool} failed={failed} platforms={platforms} />
           </div>
-          <section className="card grid gap-4 p-6">
-            <PanelLabel n={11}>Evidence base for this week</PanelLabel>
+          <TalkMap rows={topPool} failed={failed} platforms={platforms} />
+          <Panel n={9} title="How we counted" body="grid gap-4 p-6">
             <div className="grid grid-cols-2 gap-6 sm:grid-cols-4">
               {[
-                ['Threads checked', data.corpus[7].toLocaleString('en-IN'), data.corpus[6] ? `${data.corpus[7] - data.corpus[6] >= 0 ? '+' : ''}${data.corpus[7] - data.corpus[6]} vs last week` : 'this week', 'var(--cool)'],
-                ['Real pain threads', data.counts.pain.toLocaleString('en-IN'), data.counts.rules ? `${data.counts.rules} labelled by keyword rules` : 'kept after Gemini filtering', 'var(--warn)'],
-                ['Filtered as noise', data.counts.noise.toLocaleString('en-IN'), 'how-to questions, user error', 'var(--steady)'],
-                ['Communities covered', `${SOURCES.length - failed.length}/${SOURCES.length}`, failed.length ? `${failed.map((f) => SOURCE_NAMES[f]).join(', ')} unavailable` : 'all responded', failed.length ? 'var(--alert)' : 'var(--ok)'],
+                ['Threads read', data.corpus[7].toLocaleString('en-IN'), 'mentioned a tracked keyword', 'var(--cool)'],
+                ['Genuine complaints', data.counts.pain.toLocaleString('en-IN'), data.counts.rules ? `${data.counts.rules} labelled by keyword rules` : 'labelled by Gemini Flash', 'var(--brand-orange)'],
+                ['Filtered out', data.counts.noise.toLocaleString('en-IN'), 'how-to questions, user errors, off-topic', 'var(--steady)'],
+                ['Platforms read', `${platforms.filter((x) => x.state === 'live').length}/${platforms.length}`, platforms.filter((x) => x.state !== 'live').map((x) => x.name).join(', ') + ' not included', 'var(--ok)'],
               ].map(([l, v, n, c]) => (
                 <div key={l} className="grid gap-1"><div className="font-mono text-[10.5px] uppercase tracking-[.1em] text-faint">{l}</div><div className="font-mono text-[28px] font-semibold leading-none">{v}</div><div className="h-[3px] w-12 rounded-full" style={{ background: c }} /><div className="text-[11.5px] text-faint">{n}</div></div>
               ))}
             </div>
             <p className="text-[11.5px] text-faint">How we count: a thread is one discussion, counted once however many comments it has; cross-posts are merged. Weeks run Friday to Thursday (IST) and only complete weeks are compared.</p>
-          </section>
+          </Panel>
         </>)}
 
         {data && !empty && view === 'trends' && (<>
           <TrendChart rows={topPool} weeks={data.weeks} />
           <ActivityHeatmap rows={topPool} weeks={data.weeks} onPick={focusRow} />
-          <Leaderboard rows={rows} total={data.pains.length} failed={failed} extraIfLooser={extraIfLooser} mode={mode} setMode={setMode} cat={cat} setCat={setCat} srcSel={srcSel} toggleSrc={toggleSrc} sort={sort} setSort={setSort} cmp={cmp} setCmp={setCmp} open={open} setOpen={setOpen} clearFilters={clearFilters} shortIds={shortIds} addShort={addShort} openDraft={(ids) => setDraft({ ids })} dismiss={dismiss} hiddenCount={dismissed.length} showHidden={showHidden} setShowHidden={setShowHidden} weeks={data.weeks} />
+          <Leaderboard rows={rows} total={data.pains.length} failed={failed} extraIfLooser={extraIfLooser} mode={mode} setMode={setMode} cat={cat} setCat={setCat} srcSel={srcSel} toggleSrc={toggleSrc} sort={sort} setSort={setSort} cmp={cmp} setCmp={setCmp} open={open} setOpen={setOpen} clearFilters={clearFilters} platforms={platforms} shortIds={shortIds} addShort={addShort} openDraft={(ids) => setDraft({ ids })} dismiss={dismiss} hiddenCount={dismissed.length} showHidden={showHidden} setShowHidden={setShowHidden} weeks={data.weeks} />
         </>)}
 
         {view === 'watchlist' && <Watchlist terms={terms} termsError={termsError} reload={loadTerms} toast={toast} candidates={data?.candidates} />}
         {view === 'system' && <SystemView data={data} healthInfo={healthInfo} srcSel={srcSel} toggleSrc={toggleSrc} />}
 
         <footer className="flex flex-wrap items-center justify-between gap-2 pb-6 pt-2 font-mono text-[10.5px] uppercase tracking-[.08em] text-faint">
-          <span>Labels by Gemini Flash · counts by Neon Postgres · live sources: Hacker News, Stack Overflow, GitHub Issues, Reddit</span>
+          <span>Labels by Gemini Flash · counts by Neon Postgres · platforms: {platforms.filter((x) => x.state === 'live').map((x) => x.name).join(', ') || 'none yet'}</span>
           <span>Pulse for Sumit's sprint planning</span>
         </footer>
       </main>
