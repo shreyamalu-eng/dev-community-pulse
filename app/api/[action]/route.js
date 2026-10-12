@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { db, ensureSchema, ingest, classify, synthesize, briefData, draftBrief, health, alertIfDown, latestCompleteWeek, emailBrief, lastDelivery } from '../../../lib/server';
+import { db, ensureSchema, ingest, classify, synthesize, briefData, draftBrief, health, alertIfDown, latestCompleteWeek, emailBrief, lastDelivery, calendarData, backfillHistory, historyStatus } from '../../../lib/server';
 import { CATS } from '../../../lib/painpoints';
 
 export const dynamic = 'force-dynamic';
@@ -9,6 +9,8 @@ const BATCH = 60; // threads per call: two parallel Gemini requests of 30 fit we
 const ok = (data, status = 200) => NextResponse.json(data, { status, headers: { 'Cache-Control': 'no-store' } });
 const fail = (e, status) => ok({ error: String(e?.message || e) }, status || e?.status || 500);
 const userError = (m) => Object.assign(new Error(m), { status: 400 });
+// a period is ?grain=week&week=… | grain=month&month=YYYY-MM | grain=custom&from=…&to=…
+const periodOf = (o = {}) => (typeof o === 'string' ? o : { grain: o.grain, week: o.week, month: o.month, from: o.from, to: o.to });
 
 function cronAllowed(req, strict = false) {
   const secret = process.env.CRON_SECRET;
@@ -21,7 +23,9 @@ export async function GET(req, { params }) {
   try {
     switch (params.action) {
       case 'brief':
-        return ok(await briefData(url.searchParams.get('week')));
+        return ok(await briefData(periodOf(Object.fromEntries(url.searchParams))));
+      case 'calendar':
+        return ok(await calendarData());
       case 'watchlist':
         return ok(await watchlist());
       case 'delivery':
@@ -78,7 +82,9 @@ export async function POST(req, { params }) {
       case 'classify':
         return ok(await classify(BATCH));
       case 'summarize':
-        return ok(await synthesize(body.week));
+        return ok(await synthesize(periodOf(body.period || body.week)));
+      case 'history':
+        return ok(body.status ? await historyStatus() : await backfillHistory());
       case 'email': {
         const r = await emailBrief({ week: body.week, force: true, channel: 'manual', appUrl: new URL('/', req.url).toString() });
         return ok(r, r.sent || r.reason ? 200 : 502);
@@ -90,7 +96,7 @@ export async function POST(req, { params }) {
       case 'draft': {
         const ids = Array.isArray(body.ids) ? body.ids.slice(0, 6) : [];
         if (!ids.length) return fail('Pick at least one pain point', 400);
-        return ok(await draftBrief(ids, body.week));
+        return ok(await draftBrief(ids, periodOf(body.period || body.week)));
       }
       default:
         return fail('Not found', 404);
