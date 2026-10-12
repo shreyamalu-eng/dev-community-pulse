@@ -6,7 +6,7 @@ import { SRC, CAT_STYLE, TREND, healthTone, Glyph, PanelLabel, StatusDot, Tabs, 
 
 /* ── constants ── */
 const PEOPLE = { sumit: { name: 'Sumit', role: 'PM · decides' }, neha: { name: 'Neha', role: 'Eng lead' }, kabir: { name: 'Kabir', role: 'Sales lead' } };
-const SERIES_COLORS = ['#22D3EE', '#C4B5FD', '#FBBF24', '#F472B6'];
+const SERIES_COLORS = ['#F4A53F', '#F0767A', '#8E98FF', '#C9CDF5'];
 const VIEWS = [['brief', 'Brief'], ['trends', 'Trends'], ['watchlist', 'Topics & keywords'], ['system', 'System']];
 const STEPS = [
   ['Fetch', 'Pulling new threads from Hacker News, Stack Overflow, GitHub and Reddit'],
@@ -46,7 +46,7 @@ function nextRun(now = new Date()) {
 const TrendPill = ({ label }) => { const t = TREND[label]; return <span className="inline-flex h-6 shrink-0 items-center gap-1 whitespace-nowrap rounded-full px-2.5 text-[11px] font-medium" style={{ background: t.soft, color: t.ink }}><span aria-hidden="true" className="text-[8px]">{t.glyph}</span>{t.word}</span>; };
 const FewVoices = ({ n }) => <span className="inline-flex h-6 items-center rounded-full border border-dashed border-warn/60 px-2.5 text-[11px] text-warn" title={`${n} developer(s). Not enough to call a trend.`}>Too few voices</span>;
 /* topic pill: glyph + label in the topic colour on a 12% fill, fixed width, never truncated */
-const TopicPill = ({ cat, compact }) => { const t = CAT_STYLE[cat] || CAT_STYLE.flow; return <span className={`inline-flex h-6 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full px-2.5 text-[11px] font-medium ${compact ? '' : 'min-w-[148px]'}`} style={{ color: t.c, background: `color-mix(in srgb, ${t.c} 12%, transparent)` }}><Glyph kind={t.glyph} color={t.c} size={10} />{CATS[cat]}</span>; };
+const TopicPill = ({ cat, compact }) => { const t = CAT_STYLE[cat] || CAT_STYLE.flow; return <span className={`inline-flex h-6 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full px-2.5 text-[11px] font-medium ${compact ? '' : 'min-w-[148px]'}`} style={{ color: t.c2, background: `color-mix(in srgb, ${t.c} 16%, transparent)` }}><Glyph kind={t.glyph} color={t.c2} size={10} />{CATS[cat]}</span>; };
 const SrcDot = ({ s, size = 8 }) => <i className="inline-block shrink-0 rounded-full" style={{ width: size, height: size, background: `linear-gradient(135deg, ${SRC[s].c}, ${SRC[s].c2})` }} aria-hidden="true" />;
 function RelTag({ rel }) {
   const cls = rel === 'core' ? 'border-ink/50 text-ink' : rel === 'adjacent' ? 'border-line-strong text-muted' : 'border-line text-faint';
@@ -54,9 +54,9 @@ function RelTag({ rel }) {
 }
 /* buttons: primary = gradient filled pill · ghost = outline pill · danger = red outline that fills on hover */
 function Btn({ children, onClick, kind = 'ghost', disabled, title, type = 'button', size = 'md' }) {
-  const k = kind === 'primary' ? 'bg-[linear-gradient(90deg,#C4B5FD,#F2F2F7)] text-[#0A0A14] font-semibold'
+  const k = kind === 'primary' ? 'bg-[linear-gradient(90deg,#A31B20,#DF7E0A)] text-white font-semibold'
     : kind === 'secondary' ? 'border-[1.5px] border-ok/60 bg-ok-soft text-ok'
-    : kind === 'blue' ? 'bg-[linear-gradient(90deg,#3B82F6,#22D3EE)] text-[#0A0A14] font-semibold'
+    : kind === 'blue' ? 'bg-[linear-gradient(90deg,#0A1686,#4A57E6)] text-white font-semibold'
     : kind === 'danger' ? 'border-[1.5px] border-alert/60 text-alert-ink hover:bg-alert hover:text-[#0A0A14]'
     : 'border-[1.5px] border-line-strong text-ink hover:border-muted';
   const s = size === 'sm' ? 'h-7 px-3 text-[11.5px]' : size === 'lg' ? 'h-11 px-5 text-[13.5px]' : 'h-9 px-4 text-[12.5px]';
@@ -66,11 +66,11 @@ const Def = ({ t, d }) => <div><dt className="inline font-medium text-ink">{t}: 
 const Eyebrow = ({ children }) => <div className="font-mono text-[11px] uppercase tracking-[.12em] text-muted">{children}</div>;
 const Logo = () => (
   <svg viewBox="0 0 32 32" width="30" height="30" aria-hidden="true">
-    <rect x=".5" y=".5" width="31" height="31" rx="9.5" fill="var(--surface-2)" stroke="var(--line-strong)" />
-    <path d="M5 18h5l3-7 4 12 3-8 2 3h5" fill="none" stroke="var(--ink)" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
+    <rect width="32" height="32" rx="9.5" fill="#A31B20" />
+    <path d="M5 18h5l3-7 4 12 3-8 2 3h5" fill="none" stroke="#FFFFFF" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
   </svg>
 );
-const Orbs = ({ colors = ['#8B5CF6', '#22D3EE'] }) => (
+const Orbs = ({ colors = ['#A31B20', '#0A1686'] }) => (
   <div className="orbs" aria-hidden="true">
     <i style={{ width: 420, height: 420, left: '-6%', top: -260, background: colors[0] }} />
     {colors[1] && <i style={{ width: 360, height: 360, right: '4%', top: -220, background: colors[1] }} />}
@@ -193,15 +193,15 @@ function KpiRow({ rows, data, failed }) {
         delta={c6 ? { t: `${d >= 0 ? '+' : ''}${d}`, c: 'var(--muted)' } : null}
         viz={<Spark values={data.corpus} color="var(--cool)" w={150} h={30} />} foot={[['last wk', c6], ['8-wk avg', Math.round(sum(data.corpus) / 8)]]} />
       <Tile label="Real pain" value={data.counts.pain} unit={`of ${c7}`} tint="var(--warn)"
-        viz={<Capsule value={sharePain} max={100} c="var(--warn)" c2="#FB923C" h={14} label={`${sharePain}% of threads are real pain`} />} foot={[['share', `${sharePain}%`], ['noise', data.counts.noise]]} />
+        viz={<Capsule value={sharePain} max={100} c="#DF7E0A" c2="#F4A53F" h={14} label={`${sharePain}% of threads are real pain`} />} foot={[['share', `${sharePain}%`], ['noise', data.counts.noise]]} />
       <Tile label="Pain points active" value={live.length} unit={`of ${rows.length}`} tint="var(--cat-culture)"
         viz={<Segments n={live.length} of={rows.length} color="var(--cat-culture)" />} foot={[['new', rows.filter((r) => r.st.cur > 0 && r.st.mean === 0).length], ['quiet', rows.length - live.length]]} />
       <Tile label="Rising" value={rising.length} unit="pain points" tint="var(--alert)"
         viz={<Segments n={rising.length} of={rows.length} color="var(--alert)" />} foot={[['spikes', spikes], ['cooling', cooling]]} />
       <Tile label="Developers" value={voices} unit="voices" tint="var(--ok)"
         viz={<Spark values={painWeekly} color="var(--ok)" w={150} h={30} />} foot={[['communities', `${SOURCES.length - failed.length}/${SOURCES.length}`], ['pain thr.', curTot]]} />
-      <Tile label="Unsolved" value={unsolved} unit="%" tint="#F472B6"
-        viz={<Capsule value={unsolved} max={100} c="#EC4899" c2="#F472B6" h={14} label={`${unsolved}% of this week's pain threads unsolved`} />} foot={[['worst', worst ? `${worst.p.unresolved}%` : '–'], ['solved', `${100 - unsolved}%`]]} />
+      <Tile label="Unsolved" value={unsolved} unit="%" tint="#F0767A"
+        viz={<Capsule value={unsolved} max={100} c="#A31B20" c2="#F0767A" h={14} label={`${unsolved}% of this week's pain threads unsolved`} />} foot={[['worst', worst ? `${worst.p.unresolved}%` : '–'], ['solved', `${100 - unsolved}%`]]} />
     </div>
   );
 }
@@ -549,7 +549,7 @@ function connRows(data, healthInfo) {
   });
   const gSeries = hist.map((h) => h.gemini);
   const gem = lr?.stats?.gemini;
-  rows.push({ id: 'gemini', name: 'Gemini Flash', tile: { c: '#C4B5FD', c2: '#F2F2F7', abbr: 'GM' }, health: avg(gSeries) ?? (healthInfo?.gemini?.configured ? null : 0), series: gSeries, cadence: 'EACH RUN', err: gem && !gem.ok ? gem.error : !healthInfo?.gemini?.configured && healthInfo ? 'API key missing' : null, meta: gem?.model || 'labels + summaries' });
+  rows.push({ id: 'gemini', name: 'Gemini Flash', tile: { c: '#8E98FF', c2: '#C9CDF5', abbr: 'GM' }, health: avg(gSeries) ?? (healthInfo?.gemini?.configured ? null : 0), series: gSeries, cadence: 'EACH RUN', err: gem && !gem.ok ? gem.error : !healthInfo?.gemini?.configured && healthInfo ? 'API key missing' : null, meta: gem?.model || 'labels + summaries' });
   rows.push({ id: 'neon', name: 'Neon Postgres', tile: { c: '#34D399', c2: '#5EEAD4', abbr: 'DB' }, health: healthInfo ? (healthInfo.db?.ok ? 100 : 0) : null, series: [], cadence: 'ALWAYS ON', err: healthInfo && !healthInfo.db?.ok ? healthInfo.db?.error : null, meta: healthInfo?.db?.ok ? `${healthInfo.db.activeTerms} active terms` : 'checking…' });
   const cron = data?.lastCron;
   rows.push({ id: 'cron', name: 'Vercel Cron', tile: { c: '#F2F2F7', c2: '#A3A3B8', abbr: 'VC' }, health: cron ? (cron.status === 'ok' ? 100 : cron.status === 'partial' ? 75 : 40) : null, series: [], cadence: 'FRI 06:00 IST', next: nr, err: null, meta: cron ? `last ${ist(cron.started_at)}` : 'first run this Friday' });
@@ -574,9 +574,9 @@ function Connections({ data, healthInfo, compact, srcSel, toggleSrc, n = 10 }) {
                 <td className="py-3 pr-3"><div className="flex items-center gap-3"><ConnTile t={r.tile} /><div className="min-w-0"><div className="text-[13px] font-medium">{r.name}</div>{r.err ? <div className="max-w-[260px] truncate text-[11px] text-alert-ink" title={r.err}>{r.err}</div> : <div className="text-[11px] text-faint">{r.meta}</div>}</div></div></td>
                 <td className="py-3 pr-3"><div className="flex items-center gap-2"><Ring value={r.health} ticked size={52} stroke={8} label={null} /><StatusDot color={t.ink} word={t.word} /></div></td>
                 {!compact && <td className="py-3 pr-3">{r.series.length ? <Spark values={r.series} color={t.c} w={110} h={26} /> : <span className="font-mono text-[10.5px] text-faint">live check</span>}</td>}
-                <td className="py-3 pr-3"><div className="font-mono text-[10.5px] text-muted">{r.cadence}</div>{r.next && <div className="mt-1 grid w-[120px] gap-1"><Capsule value={Math.round(r.next.frac * 100)} max={100} c="var(--cool)" c2="#22D3EE" h={6} label={`next run in ${r.next.left}`} /><span className="font-mono text-[10px] text-faint">next in {r.next.left}</span></div>}</td>
+                <td className="py-3 pr-3"><div className="font-mono text-[10.5px] text-muted">{r.cadence}</div>{r.next && <div className="mt-1 grid w-[120px] gap-1"><Capsule value={Math.round(r.next.frac * 100)} max={100} c="#0A1686" c2="#8E98FF" h={6} label={`next run in ${r.next.left}`} /><span className="font-mono text-[10px] text-faint">next in {r.next.left}</span></div>}</td>
                 {!compact && <td className="py-3 text-right">{r.src ? (
-                  <button role="switch" aria-checked={on} disabled={isDown} title={isDown ? `${r.name} did not respond in the last run, so it is left out` : undefined} aria-label={`Include ${r.name} in the brief`} onClick={() => toggleSrc(r.src)} className={`relative inline-flex h-6 w-11 rounded-full transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${on ? 'bg-[linear-gradient(90deg,#34D399,#5EEAD4)]' : 'bg-track'}`}>
+                  <button role="switch" aria-checked={on} disabled={isDown} title={isDown ? `${r.name} did not respond in the last run, so it is left out` : undefined} aria-label={`Include ${r.name} in the brief`} onClick={() => toggleSrc(r.src)} className={`relative inline-flex h-6 w-11 rounded-full transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${on ? 'bg-[linear-gradient(90deg,#1E8F6B,#46C59A)]' : 'bg-track'}`}>
                     <span className={`absolute top-0.5 h-5 w-5 rounded-full bg-ink transition-[left] ${on ? 'left-[22px]' : 'left-0.5'}`} />
                   </button>) : <span className="font-mono text-[10.5px] text-faint">—</span>}</td>}
               </tr>
@@ -714,7 +714,7 @@ function Leaderboard(props) {
             <button aria-pressed={cat === 'all'} onClick={() => setCat('all')} className={chip(cat === 'all')}>All</button>
             {Object.entries(CATS).map(([k, l]) => { const on = cat === k; const t = CAT_STYLE[k]; return (
               <button key={k} aria-pressed={on} onClick={() => setCat(k)} className="press inline-flex h-7 items-center gap-1.5 whitespace-nowrap rounded-full border-[1.5px] px-3 text-[11.5px]"
-                style={{ borderColor: on ? t.c : 'var(--line)', color: on ? t.c : 'var(--muted)', background: on ? `color-mix(in srgb, ${t.c} 12%, transparent)` : 'transparent' }}><Glyph kind={t.glyph} color={t.c} size={10} />{l}</button>
+                style={{ borderColor: on ? t.c : 'var(--line)', color: on ? t.c2 : 'var(--muted)', background: on ? `color-mix(in srgb, ${t.c} 16%, transparent)` : 'transparent' }}><Glyph kind={t.glyph} color={t.c2} size={10} />{l}</button>
             ); })}
           </div>
           <span className="font-mono text-[10.5px] uppercase tracking-[.1em] text-faint">Sources</span>
@@ -898,7 +898,7 @@ function Watchlist({ terms, termsError, reload, toast, candidates }) {
         <div className="grid gap-4 border-t border-line px-6 py-5 md:grid-cols-2 xl:grid-cols-4">
           {Object.entries(CATS).map(([ck, cl]) => { const t = CAT_STYLE[ck]; const mine = terms.filter((x) => x.category_id === ck); return (
             <div key={ck} className="grid min-w-0 content-start gap-3 rounded-[12px] border border-line bg-surface-2 p-4">
-              <div className="flex items-center justify-between gap-2"><span className="flex items-center gap-2 text-[12.5px] font-medium" style={{ color: t.c }}><Glyph kind={t.glyph} color={t.c} />{cl}</span><span className="font-mono text-[11px] text-faint">{mine.filter((x) => x.kind === 'include').length}</span></div>
+              <div className="flex items-center justify-between gap-2"><span className="flex items-center gap-2 text-[12.5px] font-medium" style={{ color: t.c2 }}><Glyph kind={t.glyph} color={t.c2} />{cl}</span><span className="font-mono text-[11px] text-faint">{mine.filter((x) => x.kind === 'include').length}</span></div>
               <div className="flex flex-wrap gap-1.5">
                 {mine.map((x) => (
                   <span key={x.id} className={`inline-flex h-7 items-center gap-1 rounded-full border-[1.5px] px-2.5 text-[11.5px] ${x.kind === 'include' ? 'border-line bg-surface' : 'border-dashed border-alert/50 text-alert-ink'}`} style={x.fresh ? { borderColor: 'var(--warn)' } : undefined}>
@@ -1015,7 +1015,7 @@ function SystemView({ data, healthInfo, srcSel, toggleSrc }) {
 function FirstRun({ onRun, running }) {
   return (
     <section className="card relative grid gap-4 overflow-hidden p-8">
-      <Orbs colors={['#8B5CF6', '#F59E0B']} />
+      <Orbs colors={['#0A1686', '#DF7E0A']} />
       <div className="relative z-[1] grid max-w-[640px] gap-3">
         <PanelLabel>Welcome, Sumit</PanelLabel>
         <h2 className="text-[28px] font-semibold leading-tight">Your first Friday brief is one click away</h2>
