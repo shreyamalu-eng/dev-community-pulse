@@ -1193,6 +1193,22 @@ export default function Dashboard() {
     } finally { setRunning(false); }
   };
   const [summarizing, setSummarizing] = useState(false);
+  const [reporting, setReporting] = useState(false);
+  // PDF report of the period on screen, built in the browser from the numbers already loaded
+  const makeReport = async () => {
+    if (!data) return;
+    setReporting(true);
+    try {
+      const { downloadReport } = await import('./report');
+      const filters = [];
+      if (cat !== 'all') filters.push(`topic: ${CATS[cat]}`);
+      if (eff.length < SOURCES.length) filters.push(`platforms: ${eff.map((s) => SOURCE_NAMES[s]).join(', ')}`);
+      const hidden = dismissed.filter((id) => data.pains.some((p) => p.id === id)).length;
+      if (hidden) filters.push(`${hidden} problem${hidden > 1 ? 's' : ''} hidden as "not our problem"`);
+      const r = await downloadReport({ data, rows: topPool, W, labels: LABELS, platforms, failed, short, titles, filters, findings: findings(topPool), appUrl: location.origin });
+      toast(`Report downloaded: ${r.name} (${r.pages} page${r.pages > 1 ? 's' : ''})`);
+    } catch (e) { toast(`Report failed: ${e.message}`); } finally { setReporting(false); }
+  };
   const summarize = async () => {
     setSummarizing(true);
     try { const r = await api('summarize', { period: curQ }); await loadBrief(curQ); toast(r.error ? `Summary failed: ${r.error}` : `AI summaries written for ${r.written} pain point${r.written === 1 ? '' : 's'}`); }
@@ -1252,6 +1268,11 @@ export default function Dashboard() {
             </p>
             {data && !loadError && <div className="mt-3"><PlatformStrip platforms={platforms} /></div>}
           </div>
+          {data && !empty && (view === 'brief' || view === 'trends') && (
+            <Btn onClick={makeReport} disabled={reporting || running} title={`Download a PDF report of ${period?.label || 'this period'}: headline numbers, ranked problems, AI summaries, evidence links, platforms, team vote and how we counted`}>
+              {reporting ? <><span className="spin inline-block h-3 w-3 rounded-full border-2 border-ink/30 border-t-ink" aria-hidden="true" />Building report…</> : <><svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 2v8m0 0L4.8 6.8M8 10l3.2-3.2M3 13h10" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" /></svg>Download report (PDF)</>}
+            </Btn>
+          )}
         </div>
 
         {running && <RunTracker step={step} note={stepNote} />}
