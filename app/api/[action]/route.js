@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { db, ensureSchema, ingest, classify, synthesize, briefData, draftBrief, health, alertIfDown, latestCompleteWeek, emailBrief, lastDelivery, calendarData, backfillHistory, historyStatus } from '../../../lib/server';
-import { CATS } from '../../../lib/painpoints';
+import { CATS, metaFor } from '../../../lib/painpoints';
+import { TEAM, TEAM_BY_ID, VOTERS, sampleChat } from '../../../lib/team';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
@@ -32,6 +33,10 @@ export async function GET(req, { params }) {
         return ok(await lastDelivery());
       case 'shortlist':
         return ok(await shortlist(url.searchParams.get('week') || latestCompleteWeek()));
+      case 'comments':
+        return ok(await comments(url.searchParams.get('week') || latestCompleteWeek()));
+      case 'team':
+        return ok(await team());
       case 'health': {
         const h = await health(url.searchParams.get('deep') === '1');
         if (url.searchParams.get('alert') === '1' && cronAllowed(req)) h.alerted = await alertIfDown(h);
@@ -93,6 +98,10 @@ export async function POST(req, { params }) {
         return ok(await watchlistWrite(body));
       case 'shortlist':
         return ok(await shortlistWrite(body));
+      case 'comments':
+        return ok(await commentWrite(body));
+      case 'team':
+        return ok(await teamWrite(body));
       case 'draft': {
         const ids = Array.isArray(body.ids) ? body.ids.slice(0, 6) : [];
         if (!ids.length) return fail('Pick at least one pain point', 400);
@@ -149,7 +158,6 @@ async function watchlistWrite(b) {
 }
 
 /* ── shortlist + votes ── */
-const VOTERS = ['sumit', 'neha', 'kabir'];
 async function shortlist(week) {
   await ensureSchema();
   const sql = db();
@@ -178,4 +186,75 @@ async function shortlistWrite(b) {
     await sql`UPDATE shortlist SET decision = ${d} WHERE week_start=${week} AND pain_point_id=${id}`;
   } else throw userError('Unknown shortlist action');
   return shortlist(week);
+}
+
+/* ── team discussion under each voted problem ── */
+const isWeek = (w) => /^\d{4}-\d{2}-\d{2}$/.test(w || '');
+async function comments(week) {
+  await ensureSchema();
+  const sql = db();
+  if (!isWeek(week)) throw userError('Bad week');
+  // seed a short sample discussion the first time a voted problem has none, so the feature is easy to see
+  const empty = await sql`SELECT s.pain_point_id AS id, t.label FROM shortlist s JOIN pain_point_taxonomy t ON t.id = s.pain_point_id
+    WHERE s.week_start = ${week} AND NOT EXISTS (SELECT 1 FROM comments c WHERE c.week_start = s.week_start AND c.pain_point_id = s.pain_point_id)`;
+  for (const e of empty) {
+    const ids = {}; let mins = 240;
+    for (const c of sampleChat(metaFor(e.id), e.label)) {
+      const [r] = await sql`INSERT INTO comments (week_start, pain_point_id, author, body, parent_id, sample, created_at)
+        VALUES (${week}, ${e.id}, ${c.author}, ${c.body}, ${c.parent ? ids[c.parent] : null}, true, now() - make_interval(mins => ${mins})) RETURNING id`;
+      ids[c.key] = r.id; mins -= 37;
+    }
+  }
+  const rows = await sql`SELECT id, pain_point_id AS pid, author, body, parent_id AS parent, sample, created_at AS at FROM comments WHERE week_start = ${week} ORDER BY created_at, id`;
+  return { week, comments: rows };
+}
+
+async function commentWrite(b) {
+  await ensureSchema();
+  const sql = db();
+  const week = isWeek(b.week) ? b.week : latestCompleteWeek();
+  if (b.op === 'delete') {
+    const [c] = await sql`SELECT author FROM comments WHERE id = ${Number(b.cid)}`;
+    if (!c) throw userError('Comment not found');
+    if (c.author !== b.author) throw Object.assign(new Error('You can only delete your own comments'), { status: 403 });
+    await sql`DELETE FROM comments WHERE id = ${Number(b.cid)} OR parent_id = ${Number(b.cid)}`;
+    return comments(week);
+  }
+  const id = String(b.id || '');
+  const [exists] = await sql`SELECT 1 AS x FROM pain_point_taxonomy WHERE id = ${id}`;
+  if (!exists) throw userError('Unknown pain point');
+  if (!TEAM_BY_ID[b.author]) throw userError('Pick who you are first');
+  const body = String(b.body || '').trim().replace(/\n{3,}/g, '\n\n');
+  if (body.length < 2 || body.length > 1200) throw userError('Comments must be 2 to 1,200 characters');
+  let parent = b.parent ? Number(b.parent) : null;
+  if (parent) {
+    const [pc] = await sql`SELECT id, parent_id FROM comments WHERE id = ${parent} AND week_start = ${week} AND pain_point_id = ${id}`;
+    if (!pc) throw userError('That comment no longer exists');
+    parent = pc.parent_id || pc.id; // replies stay one level deep
+  }
+  await sql`INSERT INTO comments (week_start, pain_point_id, author, body, parent_id) VALUES (${week}, ${id}, ${b.author}, ${body}, ${parent})`;
+  return comments(week);
+}
+
+/* ── team page: starting profiles from lib/team.js, overridden by what each person saves ── */
+async function team() {
+  await ensureSchema();
+  const sql = db();
+  const notes = await sql`SELECT person, focus, view, keywords, updated_at FROM team_notes`;
+  const by = Object.fromEntries(notes.map((n) => [n.person, n]));
+  return { people: TEAM.map((p) => { const n = by[p.id]; return { ...p, focus: n?.focus || p.focus, view: n?.view || p.view, keywords: n?.keywords?.length ? n.keywords : p.keywords, updatedAt: n?.updated_at || null }; }) };
+}
+
+async function teamWrite(b) {
+  await ensureSchema();
+  const sql = db();
+  if (!TEAM_BY_ID[b.person]) throw userError('Unknown teammate');
+  const clip = (v, n) => String(v || '').trim().slice(0, n);
+  const focus = clip(b.focus, 200), view = clip(b.view, 600);
+  const keywords = (Array.isArray(b.keywords) ? b.keywords : String(b.keywords || '').split(','))
+    .map((k) => String(k).trim()).filter((k) => k.length >= 2 && k.length <= 40).slice(0, 8);
+  if (view.length < 10) throw userError('Write at least a sentence for your view');
+  await sql`INSERT INTO team_notes (person, focus, view, keywords, updated_at) VALUES (${b.person}, ${focus}, ${view}, ${keywords}, now())
+    ON CONFLICT (person) DO UPDATE SET focus = EXCLUDED.focus, view = EXCLUDED.view, keywords = EXCLUDED.keywords, updated_at = now()`;
+  return team();
 }
