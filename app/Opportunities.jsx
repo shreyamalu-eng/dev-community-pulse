@@ -3,7 +3,7 @@
 import React, { useState } from 'react';
 import { SOURCES, SOURCE_NAMES, CATS, priority, trendWords } from '../lib/painpoints';
 import { TEAM } from '../lib/team';
-import { SRC, CAT_STYLE, TREND, Glyph, PanelLabel, StatusDot } from './instruments';
+import { SRC, CAT_STYLE, TREND, Glyph, PanelLabel, StatusDot, Spark } from './instruments';
 import { FlowChart } from './visuals';
 import { d8, sum, Btn, TrendPill, TopicPill, RelTag, SrcDot, AiTag, Eyebrow } from './atoms';
 import { Avatar } from './Discussion';
@@ -27,7 +27,7 @@ function Stat({ k, v, note, tone }) {
   );
 }
 
-function Opportunity({ r, i, W, labels, maxScore, vote, commentsN, watchers, addShort, openDraft, focusRow }) {
+function Opportunity({ r, i, W, labels, maxScore, vote, commentsN, watchers, addShort, openDraft, focusRow, open, onToggle }) {
   const { p, st } = r;
   const t = TREND[st.label];
   const tot = sum(p.s);
@@ -45,23 +45,31 @@ function Opportunity({ r, i, W, labels, maxScore, vote, commentsN, watchers, add
   if (p.communities >= 2) why.push(`seen on ${p.communities} platforms`);
   if (p.rel === 'core') why.push('sits inside what our reviewer does');
   return (
-    <article id={`opp-${p.id}`} className="card grid min-w-0 gap-5 p-5 sm:p-6" style={{ boxShadow: `inset 3px 0 0 ${CAT_STYLE[p.cat].c}` }}>
-      {/* 1 · headline */}
-      <header className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_220px] lg:items-start">
-        <div className="grid min-w-0 gap-2">
+    <article id={`opp-${p.id}`} className={`card grid min-w-0 scroll-mt-24 ${open ? 'gap-5 p-5 sm:p-6' : 'p-0'}`} style={{ boxShadow: `inset 3px 0 0 ${CAT_STYLE[p.cat].c}` }}>
+      {/* 1 · headline: always visible, click to open or close the deep dive */}
+      <button onClick={onToggle} aria-expanded={open} aria-controls={`opp-body-${p.id}`}
+        className={`grid w-full gap-3 text-left lg:grid-cols-[minmax(0,1fr)_auto_200px_24px] lg:items-center ${open ? '' : 'rounded-[16px] p-4 hover:bg-surface-2 sm:px-5'}`}>
+        <div className="grid min-w-0 gap-1.5">
           <div className="flex flex-wrap items-center gap-2">
-            <span className="font-mono text-[26px] font-semibold leading-none text-faint">{String(i + 1).padStart(2, '0')}</span>
+            <span className="font-mono text-[22px] font-semibold leading-none text-faint">{String(i + 1).padStart(2, '0')}</span>
             <TopicPill cat={p.cat} compact /><RelTag rel={p.rel} />{p.voices < 2 && st.cur > 0 ? null : <TrendPill label={st.label} />}
             {vote && <StatusDot color={vote.decision === 'in' ? 'var(--ok)' : vote.decision === 'later' ? 'var(--faint)' : 'var(--warn)'} word={vote.decision === 'in' ? 'In sprint' : vote.decision === 'later' ? 'Parked' : `In team vote · 👍 ${vote.up} 👎 ${vote.down}`} />}
           </div>
-          <h3 className="text-[20px] font-semibold leading-snug">{p.title}</h3>
-          {why.length > 0 && <p className="text-[12.5px] text-muted"><span className="text-ink">Why it is here: </span>{why.join(' · ')}.</p>}
+          <h3 className={`${open ? 'text-[20px]' : 'text-[16px]'} font-semibold leading-snug`}>{p.title}</h3>
         </div>
-        <div className="grid gap-1.5" title="Opportunity score: size × growth × unsolved share × fit with our product, relative to the top one">
-          <div className="flex items-baseline justify-between"><span className="font-mono text-[10px] uppercase tracking-[.1em] text-faint">Opportunity score</span><b className="font-mono text-[15px]">{Math.round((r.score / maxScore) * 100)}</b></div>
-          <div className="h-2 overflow-hidden rounded-full bg-track"><div className="h-full rounded-full" style={{ width: `${(r.score / maxScore) * 100}%`, background: 'linear-gradient(90deg,#A31B20,#DF7E0A)' }} /></div>
+        <div className="flex items-center gap-4 font-mono text-[11.5px] text-muted">
+          <span title={`Threads ${W.this}`}><b className="text-[15px] text-ink">{st.cur}</b> threads <span style={{ color: t.ink }}>{st.cur - st.prev >= 0 ? '+' : ''}{st.cur - st.prev}</span></span>
+          <span title="Share of threads with no fix or accepted answer"><b className="text-[15px]" style={{ color: p.unresolved >= 70 ? 'var(--alert-ink)' : 'var(--ink)' }}>{p.unresolved}%</b> unsolved</span>
+          <span className="hidden sm:inline" title={`All ${p.s.length} ${W.us}`}><Spark values={p.s} color={CAT_STYLE[p.cat].c2} w={84} h={24} /></span>
         </div>
-      </header>
+        <div className="grid gap-1" title="Opportunity score: size × growth × unsolved share × fit with our product, relative to the top one">
+          <div className="flex items-baseline justify-between"><span className="font-mono text-[10px] uppercase tracking-[.1em] text-faint">Opportunity score</span><b className="font-mono text-[14px]">{Math.round((r.score / maxScore) * 100)}</b></div>
+          <div className="h-1.5 overflow-hidden rounded-full bg-track"><div className="h-full rounded-full" style={{ width: `${(r.score / maxScore) * 100}%`, background: 'linear-gradient(90deg,#A31B20,#DF7E0A)' }} /></div>
+        </div>
+        <span aria-hidden="true" className={`hidden justify-self-end text-[14px] text-muted transition-transform lg:block ${open ? 'rotate-180' : ''}`}>▾</span>
+      </button>
+      {open && (<div id={`opp-body-${p.id}`} className="grid min-w-0 gap-5">
+      {why.length > 0 && <p className="-mt-2 text-[12.5px] text-muted"><span className="text-ink">Why it is here: </span>{why.join(' · ')}.</p>}
 
       {/* 2 · the numbers */}
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">
@@ -133,6 +141,7 @@ function Opportunity({ r, i, W, labels, maxScore, vote, commentsN, watchers, add
           <Btn size="sm" onClick={() => focusRow(p.id)}>Compare in Trends</Btn>
         </div>
       </div>
+      </div>)}
     </article>
   );
 }
@@ -142,34 +151,36 @@ export default function Opportunities({ rows, total, W, labels, short, comments,
   const maxScore = Math.max(1e-9, ...list.map((r) => r.score));
   const team = people?.length ? people : TEAM;
   const tally = (id) => { const x = short.items.find((y) => y.id === id); if (!x) return null; const v = Object.values(x.votes || {}); return { decision: x.decision, up: v.filter((y) => y === 'up').length, down: v.filter((y) => y === 'down').length }; };
+  const [openIds, setOpenIds] = useState([]);
+  // opening one closes the others, so the list stays easy to scan; "Open all" is there for reading everything
+  const toggle = (id) => {
+    const opening = !openIds.includes(id);
+    setOpenIds(opening ? [id] : openIds.filter((x) => x !== id));
+    if (opening) setTimeout(() => document.getElementById(`opp-${id}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 60);
+  };
   const unsolvedAvg = list.length ? Math.round(sum(list.map((r) => r.p.unresolved)) / list.length) : 0;
   return (
-    <div className="grid gap-4">
-      <section className="card grid gap-4 p-6">
+    <div className="grid gap-3">
+      <section className="card mb-1 grid gap-4 p-6">
         <p className="max-w-[95ch] text-[14.5px] leading-relaxed">
           Problems developers keep raising that existing tools don't seem to solve. These are the top {list.length} of {total} tracked problems,
           ranked by how many threads they get, whether they are growing, how often they stay unsolved, and how close they sit to our product.
           Together they average <b>{unsolvedAvg}% unsolved</b>.
         </p>
-        <ol className="grid gap-2 sm:grid-cols-2 xl:grid-cols-5">
-          {list.map((r, i) => (
-            <li key={r.p.id}>
-              <a href={`#opp-${r.p.id}`} onClick={(e) => { e.preventDefault(); document.getElementById(`opp-${r.p.id}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' }); }}
-                className="lift grid h-full content-start gap-1 rounded-[12px] border border-line bg-surface-2 p-3 hover:border-line-strong">
-                <span className="flex items-center gap-2 font-mono text-[11px] text-faint">{String(i + 1).padStart(2, '0')}<Glyph kind={CAT_STYLE[r.p.cat].glyph} color={CAT_STYLE[r.p.cat].c2} size={10} />{CATS[r.p.cat]}</span>
-                <span className="text-[13px] font-medium leading-snug">{r.p.title}</span>
-                <span className="font-mono text-[11px] text-muted">{r.st.cur} {W.this} · {r.p.unresolved}% unsolved</span>
-              </a>
-            </li>
-          ))}
-        </ol>
+        <div className="flex flex-wrap items-center justify-between gap-2 border-t border-line pt-3 text-[12px] text-muted">
+          <span>Pick one to open the deep dive: numbers, what tools miss, trend, platforms, every linked thread and what we would do.</span>
+          <span className="flex gap-3">
+            <button onClick={() => setOpenIds(list.map((r) => r.p.id))} className="text-link underline underline-offset-2">Open all</button>
+            <button onClick={() => setOpenIds([])} className="text-link underline underline-offset-2">Close all</button>
+          </span>
+        </div>
       </section>
       {list.length === 0 && <div className="card p-6 text-[13px] text-muted">No problem inside our product area has threads in this period yet.</div>}
       {list.map((r, i) => (
         <Opportunity key={r.p.id} r={r} i={i} W={W} labels={labels} maxScore={maxScore} vote={tally(r.p.id)}
           commentsN={comments.filter((c) => c.pid === r.p.id).length}
           watchers={team.filter((m) => (m.pains || []).includes(r.p.id))}
-          addShort={addShort} openDraft={openDraft} focusRow={focusRow} />
+          addShort={addShort} openDraft={openDraft} focusRow={focusRow} open={openIds.includes(r.p.id)} onToggle={() => toggle(r.p.id)} />
       ))}
       {candidates?.length > 0 && (
         <section className="grid gap-3">
