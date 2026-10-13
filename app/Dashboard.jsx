@@ -1,14 +1,20 @@
 'use client';
 import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
-import { CATS, REL, SOURCES, SOURCE_NAMES, MODES, stats, priority, suggest, ambiguity, guessCat } from '../lib/painpoints';
+import { CATS, REL, SOURCES, SOURCE_NAMES, MODES, stats, priority, suggest, ambiguity, guessCat, trendWords } from '../lib/painpoints';
 import { FlowChart } from './visuals';
 import PeriodPicker from './PeriodPicker';
+import { TEAM, TEAM_BY_ID, GROUPS } from '../lib/team';
+import Discussion from './Discussion';
+import Opportunities from './Opportunities';
+import Team from './Team';
+import { MON, d8, sum, api, store, TrendPill, FewVoices, TopicPill, SrcDot, RelTag, Btn, Def, Eyebrow, seg, chip, Panel, AiTag, Layer } from './atoms';
 import { SRC, CAT_STYLE, TREND, healthTone, Glyph, PanelLabel, StatusDot, Tabs, Capsule, ThinDonut, Ring, DotMeter, Spark, Segments, Tile, Scatter, Sankey, Heatmap } from './instruments';
 
 /* ── constants ── */
-const PEOPLE = { sumit: { name: 'Sumit', role: 'PM · decides' }, neha: { name: 'Neha', role: 'Eng lead' }, kabir: { name: 'Kabir', role: 'Sales lead' } };
+// voters: Sumit decides, Neha and Kabir vote; the rest of the 15-person team comments
+const PEOPLE = Object.fromEntries(TEAM.filter((p) => p.voter).map((p) => [p.id, { name: p.name, role: p.decides ? 'PM · decides' : p.role }]));
 const SERIES_COLORS = ['#F4A53F', '#F0767A', '#8E98FF', '#C9CDF5'];
-const VIEWS = [['brief', 'Brief'], ['trends', 'Trends'], ['watchlist', 'Topics & keywords'], ['system', 'System']];
+const VIEWS = [['brief', 'Brief'], ['opportunities', 'Opportunities'], ['trends', 'Trends'], ['watchlist', 'Topics & keywords'], ['team', 'Team'], ['system', 'System']];
 const STEPS = [
   ['Fetch', 'Pulling new threads from Hacker News, Stack Overflow, GitHub and Reddit'],
   ['Label', 'Gemini Flash sorts real pain from debugging noise'],
@@ -17,8 +23,6 @@ const STEPS = [
 ];
 
 /* ── utils ── */
-const MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-const d8 = (iso) => { const d = new Date(iso + 'T00:00:00Z'); return `${d.getUTCDate()} ${MON[d.getUTCMonth()]}`; };
 const plus = (iso, n) => { const d = new Date(iso + 'T00:00:00Z'); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); };
 const range = (iso) => `Fri ${d8(iso)} – Thu ${d8(plus(iso, 6))}`;
 /* words for the period being viewed (week, month or custom range); set once per render by <Dashboard> */
@@ -28,20 +32,13 @@ function mkW(u = 'week') {
     last: per ? 'the previous period' : `last ${u}`, normal: per ? 'normal' : `4-${u} normal`, every: per ? 'every period' : `every ${u}` };
 }
 let W = mkW('week'); let L = 7; let LABELS = [];
+/* evidence levels scale with the period: a month needs about four times the threads of a week */
+let EV = 1;
+const evMin = (k) => (k === 'exploratory' ? 1 : Math.max(MODES[k].min, Math.round(MODES[k].min * EV)));
+const evHint = (k) => `${evMin(k)}+ thread${evMin(k) > 1 ? 's' : ''}`;
 const qs = (q) => (!q ? '' : `?${new URLSearchParams(Object.entries(q).filter(([, v]) => v)).toString()}`);
 const ist = (ts) => { try { return new Date(ts).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit', hour12: false }) + ' IST'; } catch { return ''; } };
 const ago = (ts) => { const h = (Date.now() - new Date(ts).getTime()) / 36e5; return h < 1 ? `${Math.max(1, Math.round(h * 60))}m ago` : h < 48 ? `${Math.round(h)}h ago` : `${Math.round(h / 24)}d ago`; };
-const sum = (a) => a.reduce((x, y) => x + y, 0);
-async function api(path, body) {
-  const r = await fetch(`/api/${path}`, body ? { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) } : { cache: 'no-store' });
-  const j = await r.json().catch(() => ({ error: `Server returned ${r.status}` }));
-  if (!r.ok) throw Object.assign(new Error(j.error || `Request failed (${r.status})`), { status: r.status });
-  return j;
-}
-const store = {
-  get(k, d) { try { return localStorage.getItem(k) ?? d; } catch { return d; } },
-  set(k, v) { try { localStorage.setItem(k, v); } catch {} },
-};
 /* next scheduled run: Friday 06:00 IST = Friday 00:30 UTC */
 function nextRun(now = new Date()) {
   const t = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), 0, 30));
@@ -52,27 +49,6 @@ function nextRun(now = new Date()) {
 }
 
 /* ── atoms ── */
-const TrendPill = ({ label }) => { const t = TREND[label]; return <span className="inline-flex h-6 shrink-0 items-center gap-1 whitespace-nowrap rounded-full px-2.5 text-[11px] font-medium" style={{ background: t.soft, color: t.ink }}><span aria-hidden="true" className="text-[8px]">{t.glyph}</span>{t.word}</span>; };
-const FewVoices = ({ n }) => <span className="inline-flex h-6 items-center rounded-full border border-dashed border-warn/60 px-2.5 text-[11px] text-warn" title={`${n} developer(s). Not enough to call a trend.`}>Too few voices</span>;
-/* topic pill: glyph + label in the topic colour on a 12% fill, fixed width, never truncated */
-const TopicPill = ({ cat, compact }) => { const t = CAT_STYLE[cat] || CAT_STYLE.flow; return <span className={`inline-flex h-6 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full px-2.5 text-[11px] font-medium ${compact ? '' : 'min-w-[148px]'}`} style={{ color: t.c2, background: `color-mix(in srgb, ${t.c} 16%, transparent)` }}><Glyph kind={t.glyph} color={t.c2} size={10} />{CATS[cat]}</span>; };
-const SrcDot = ({ s, size = 8 }) => <i className="inline-block shrink-0 rounded-full" style={{ width: size, height: size, background: `linear-gradient(135deg, ${SRC[s].c}, ${SRC[s].c2})` }} aria-hidden="true" />;
-function RelTag({ rel }) {
-  const cls = rel === 'core' ? 'border-ink/50 text-ink' : rel === 'adjacent' ? 'border-line-strong text-muted' : 'border-line text-faint';
-  return <span className={`inline-flex h-5 items-center rounded-full border px-2 text-[10.5px] ${cls}`}>{(REL[rel] || REL.adjacent).label}</span>;
-}
-/* buttons: primary = gradient filled pill · ghost = outline pill · danger = red outline that fills on hover */
-function Btn({ children, onClick, kind = 'ghost', disabled, title, type = 'button', size = 'md' }) {
-  const k = kind === 'primary' ? 'bg-[linear-gradient(90deg,#A31B20,#DF7E0A)] text-white font-semibold'
-    : kind === 'secondary' ? 'border-[1.5px] border-ok/60 bg-ok-soft text-ok'
-    : kind === 'blue' ? 'bg-[linear-gradient(90deg,#0A1686,#4A57E6)] text-white font-semibold'
-    : kind === 'danger' ? 'border-[1.5px] border-alert/60 text-alert-ink hover:bg-alert hover:text-[#0A0A14]'
-    : 'border-[1.5px] border-line-strong text-ink hover:border-muted';
-  const s = size === 'sm' ? 'h-7 px-3 text-[11.5px]' : size === 'lg' ? 'h-11 px-5 text-[13.5px]' : 'h-9 px-4 text-[12.5px]';
-  return <button type={type} title={title} disabled={disabled} onClick={onClick} className={`press inline-flex shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-full font-medium ${s} ${k} disabled:cursor-not-allowed disabled:opacity-40`}>{children}</button>;
-}
-const Def = ({ t, d }) => <div><dt className="inline font-medium text-ink">{t}: </dt><dd className="inline text-muted">{d}</dd></div>;
-const Eyebrow = ({ children }) => <div className="font-mono text-[11px] uppercase tracking-[.12em] text-muted">{children}</div>;
 const Logo = () => (
   <svg viewBox="0 0 32 32" width="30" height="30" aria-hidden="true">
     <rect width="32" height="32" rx="9.5" fill="#A31B20" />
@@ -85,16 +61,7 @@ const Orbs = ({ colors = ['#A31B20', '#0A1686'] }) => (
     {colors[1] && <i style={{ width: 360, height: 360, right: '4%', top: -220, background: colors[1] }} />}
   </div>
 );
-const seg = (on) => `press h-7 whitespace-nowrap rounded-full px-3 text-[11.5px] ${on ? 'bg-surface-2 text-ink ring-1 ring-line-strong' : 'text-muted hover:text-ink'}`;
-const chip = (on) => `press inline-flex h-7 items-center gap-1.5 whitespace-nowrap rounded-full border-[1.5px] px-3 text-[11.5px] ${on ? 'border-ink/70 bg-surface-2 text-ink' : 'border-line text-muted hover:text-ink'}`;
 
-/* every section: numbered label above, content in the card below */
-const Panel = ({ n, title, right, children, className = '', body = 'p-6' }) => (
-  <section className={`grid min-w-0 content-start gap-3 ${className}`}>
-    <PanelLabel n={n} right={right}>{title}</PanelLabel>
-    <div className={`card min-w-0 ${body}`}>{children}</div>
-  </section>
-);
 
 /* platforms: the four we read, plus the ones not connected yet */
 const PLATFORM_NAMES = { ...SOURCE_NAMES, discord: 'Discord', x: 'X (Twitter)' };
@@ -114,20 +81,6 @@ function platformStates(data, healthInfo) {
   return [...out, { id: 'discord', name: 'Discord', state: 'off', why: OFF_WHY.discord }, { id: 'x', name: 'X (Twitter)', state: 'off', why: OFF_WHY.x }];
 }
 const P_STATE = { live: { c: 'var(--ok)', w: 'live' }, down: { c: 'var(--alert)', w: 'not responding' }, off: { c: 'var(--faint)', w: 'not connected' }, idle: { c: 'var(--faint)', w: 'not run yet' } };
-function PlatformStrip({ platforms }) {
-  return (
-    <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 text-[12px]" aria-label="Platforms">
-      <span className="font-mono text-[10.5px] uppercase tracking-[.12em] text-faint">Platforms</span>
-      {platforms.map((p) => (
-        <span key={p.id} className="inline-flex items-center gap-1.5" title={p.why}>
-          <i className="h-2 w-2 rounded-full" style={p.state === 'off' || p.state === 'idle' ? { border: '1.5px solid var(--faint)' } : { background: P_STATE[p.state].c }} aria-hidden="true" />
-          <span className={p.state === 'live' ? 'text-ink' : p.state === 'down' ? 'text-alert-ink' : 'text-faint'}>{p.name}</span>
-          {p.state !== 'live' && <span className="text-faint">· {P_STATE[p.state].w}</span>}
-        </span>
-      ))}
-    </div>
-  );
-}
 
 /* ── navigation ── */
 function TopNav({ view, setView, data, running, onRun, onReset, problems, checked, picker }) {
@@ -195,13 +148,6 @@ function confidence(p, st) {
   if (p.voices >= 3) return { label: 'Medium confidence', c: 'var(--cool)', why: `${p.voices} developers${p.communities < 2 ? ', one community only' : ` across ${p.communities} communities`}.` };
   return { label: 'Low confidence', c: 'var(--warn)', why: `Only ${p.voices} developer${p.voices === 1 ? '' : 's'} ${W.this}. Treat as an early signal.` };
 }
-const AiTag = ({ children }) => <span className="inline-flex h-5 items-center rounded-full border border-line-strong px-2 font-mono text-[9.5px] uppercase tracking-[.08em] text-muted">✦ {children}</span>;
-const Layer = ({ k, tag, children }) => (
-  <div className="grid gap-1">
-    <div className="flex flex-wrap items-center gap-1.5"><span className="font-mono text-[10px] uppercase tracking-[.12em] text-faint">{k}</span>{tag && <AiTag>{tag}</AiTag>}</div>
-    <div className="text-[12.5px] leading-relaxed text-ink">{children}</div>
-  </div>
-);
 
 /* ── key findings (deterministic, from counts) ── */
 function findings(rows) {
@@ -281,7 +227,7 @@ function ExecSummary({ rows, data, failed, onEvidence }) {
 
 /* ── act on these first: numbers → what developers say → next step ── */
 function TopCalls({ rows, mode, setMode, shortItems, addShort, openDraft, focusRow, onSummarize, summarizing }) {
-  const top = rows.filter((r) => r.p.rel !== 'outside' && r.st.cur >= MODES[mode].min && r.p.voices >= 2)
+  const top = rows.filter((r) => r.p.rel !== 'outside' && r.st.cur >= evMin(mode) && r.p.voices >= 2)
     .sort((a, b) => priority(b.p.rel, b.p.unresolved, b.st) - priority(a.p.rel, a.p.unresolved, a.st)).slice(0, 3);
   return (
     <section className="grid min-w-0 content-start gap-3">
@@ -355,8 +301,9 @@ function TopCalls({ rows, mode, setMode, shortItems, addShort, openDraft, focusR
 }
 
 /* ── team vote: everyone sees the tally; Sumit makes the call ── */
-function Shortlist({ items, titles, viewer, setViewer, act, openDraft, busy, weekNote }) {
+function Shortlist({ items, titles, viewer, setViewer, act, openDraft, busy, weekNote, comments = [], onComment, onDeleteComment }) {
   const isOrg = viewer === 'sumit';
+  const canVote = !!PEOPLE[viewer];
   const tally = (x) => { const v = Object.values(x.votes || {}); return { up: v.filter((y) => y === 'up').length, down: v.filter((y) => y === 'down').length }; };
   const ranked = [...items].sort((a, b) => (tally(b).up - tally(b).down) - (tally(a).up - tally(a).down));
   const fav = ranked.find((x) => tally(x).up - tally(x).down > 0);
@@ -370,11 +317,13 @@ function Shortlist({ items, titles, viewer, setViewer, act, openDraft, busy, wee
           <div key={k} className="rounded-[12px] border border-line bg-surface-2 py-2"><div className="font-mono text-[24px] font-semibold leading-none" style={{ color: v ? c : 'var(--faint)' }}>{v}</div><div className="mt-1 text-[10.5px] text-faint">{k}</div></div>
         ))}
       </div>
-      <label className="flex items-center gap-2 text-[12px] text-muted">Voting as
-        <select value={viewer} onChange={(e) => setViewer(e.target.value)} className="h-8 rounded-full border-[1.5px] border-line-strong bg-transparent px-3 text-[12px] text-ink">
-          {Object.entries(PEOPLE).map(([k, v]) => <option key={k} value={k} className="bg-surface">{v.name} ({v.role})</option>)}
+      <label className="flex items-center gap-2 text-[12px] text-muted">You are
+        <select value={viewer} onChange={(e) => setViewer(e.target.value)} className="h-8 min-w-0 flex-1 rounded-full border-[1.5px] border-line-strong bg-transparent px-3 text-[12px] text-ink">
+          <optgroup label="Votes" className="bg-surface">{TEAM.filter((p) => p.voter).map((p) => <option key={p.id} value={p.id} className="bg-surface">{p.name} ({PEOPLE[p.id].role})</option>)}</optgroup>
+          <optgroup label="Comments" className="bg-surface">{TEAM.filter((p) => !p.voter).map((p) => <option key={p.id} value={p.id} className="bg-surface">{p.name} ({p.role})</option>)}</optgroup>
         </select>
       </label>
+      {!canVote && <p className="-mt-2 text-[11.5px] text-faint">Sumit, Neha and Kabir vote. Everyone on the team can comment and reply.</p>}
       {items.length === 0 && <p className="rounded-[12px] border border-dashed border-line p-3 text-[12.5px] text-muted">Nothing up for a vote yet. Use "Put to team vote" on any problem.</p>}
       <ul className="grid gap-2">
         {ranked.map((x) => {
@@ -399,7 +348,7 @@ function Shortlist({ items, titles, viewer, setViewer, act, openDraft, busy, wee
               </div>
               <div className="flex flex-wrap items-center gap-2">
                 {['up', 'down'].map((v) => (
-                  <button key={v} disabled={busy} onClick={() => act({ op: 'vote', id: x.id, voter: viewer, vote: mine === v ? null : v })} aria-pressed={mine === v} aria-label={v === 'up' ? 'Vote for' : 'Vote against'}
+                  <button key={v} disabled={busy || !canVote} title={canVote ? undefined : 'Only Sumit, Neha and Kabir vote'} onClick={() => act({ op: 'vote', id: x.id, voter: viewer, vote: mine === v ? null : v })} aria-pressed={mine === v} aria-label={v === 'up' ? 'Vote for' : 'Vote against'}
                     className={`press h-7 rounded-full border-[1.5px] px-2.5 text-[12.5px] ${mine === v ? 'border-ink/70 bg-surface' : 'border-line'}`}>{v === 'up' ? '👍' : '👎'}</button>
                 ))}
                 <StatusDot color={status.c} word={status.w} />
@@ -412,6 +361,7 @@ function Shortlist({ items, titles, viewer, setViewer, act, openDraft, busy, wee
                   <Btn size="sm" onClick={() => openDraft([x.id])}>Sprint brief</Btn>
                 </div>
               )}
+              <Discussion pid={x.id} list={comments.filter((c) => c.pid === x.id)} viewer={viewer} onPost={onComment} onDelete={onDeleteComment} />
             </li>
           );
         })}
@@ -419,7 +369,7 @@ function Shortlist({ items, titles, viewer, setViewer, act, openDraft, busy, wee
       {isOrg ? (inSprint.length > 0
         ? <Btn kind="primary" onClick={() => openDraft(inSprint.map((x) => x.id), true)}>Open Monday pack ({inSprint.length})</Btn>
         : items.length > 0 && <p className="text-[12px] text-muted">Votes guide your call. Put at least one item in the sprint to build the Monday pack.</p>)
-        : <p className="text-[12px] text-muted">Sumit sees the same tally and makes the final call.</p>}
+        : <p className="text-[12px] text-muted">Sumit sees the same tally and comments, and makes the final call.</p>}
     </Panel>
   );
 }
@@ -526,55 +476,50 @@ function TopicRings({ rows }) {
   );
 }
 
-/* who is talking about what: one stacked bar per topic, split by platform */
-function TalkMap({ rows, failed, platforms }) {
-  const srcs = SOURCES.filter((s) => !failed.includes(s) && platforms.find((p) => p.id === s)?.state !== 'off');
-  const data = Object.keys(CATS).map((c) => {
-    const mine = rows.filter((r) => r.p.cat === c);
-    const parts = srcs.map((s) => ({ s, v: sum(mine.map((r) => r.p.bySource[s]?.[L] || 0)) }));
-    const spiking = mine.filter((r) => r.st.label === 'Spike' || r.st.label === 'Climbing').length;
-    return { c, parts, total: sum(parts.map((x) => x.v)), spiking };
-  }).sort((a, b) => b.total - a.total);
-  const max = Math.max(1, ...data.map((d) => d.total));
-  return (
-    <Panel n={8} title="Who is talking about what" right={<span className="font-mono text-[10.5px] text-faint">threads {W.this}, by platform</span>} body="grid content-start gap-4 p-6">
-      <ul className="grid gap-4">
-        {data.map((d) => (
-          <li key={d.c} className="grid gap-1.5 sm:grid-cols-[200px_1fr_120px] sm:items-center sm:gap-4">
-            <span className="flex items-center gap-2 text-[13px]"><Glyph kind={CAT_STYLE[d.c].glyph} color={CAT_STYLE[d.c].c2} />{CATS[d.c]}</span>
-            <div className="flex h-5 overflow-hidden rounded-full bg-track" role="img" aria-label={`${CATS[d.c]}: ${d.parts.map((x) => `${SOURCE_NAMES[x.s]} ${x.v}`).join(', ')}`}>
-              {d.parts.filter((x) => x.v).map((x) => (
-                <i key={x.s} className="grow-in block h-full first:rounded-l-full last:rounded-r-full" title={`${SOURCE_NAMES[x.s]}: ${x.v}`} style={{ width: `${(x.v / max) * 100}%`, background: `linear-gradient(90deg, ${SRC[x.s].c}, ${SRC[x.s].c2})`, boxShadow: 'inset -2px 0 0 var(--surface)' }} />
-              ))}
-            </div>
-            <span className="flex items-baseline justify-between gap-2 sm:justify-end"><b className="font-mono text-[15px]">{d.total}</b>{d.spiking > 0 && <span className="font-mono text-[10.5px] text-alert-ink">▲ {d.spiking} rising</span>}</span>
-          </li>
-        ))}
-      </ul>
-      <div className="flex flex-wrap gap-4 border-t border-line pt-3">{srcs.map((s) => <span key={s} className="inline-flex items-center gap-1.5 text-[11.5px] text-muted"><SrcDot s={s} />{SOURCE_NAMES[s]}</span>)}</div>
-    </Panel>
-  );
-}
-
-function SourceMix({ rows, failed, platforms }) {
+function SourceMix({ rows, failed, platforms, onPick }) {
   const [span, setSpan] = useState('week');
+  const [openP, setOpenP] = useState(null);
   const all = LABELS.map((_, i) => i);
   const idx = span === 'week' ? [L] : span === '4w' ? all.slice(-4) : all;
   const state = (s) => platforms.find((p) => p.id === s)?.state;
-  const parts = SOURCES.map((s) => ({ id: s, label: SOURCE_NAMES[s], c: SRC[s].c, c2: SRC[s].c2, value: failed.includes(s) || state(s) === 'off' ? 0 : sum(rows.map((r) => sum(idx.map((i) => r.p.bySource[s]?.[i] || 0)))) }));
+  const count = (r, s) => sum(idx.map((i) => r.p.bySource[s]?.[i] || 0));
+  const parts = SOURCES.map((s) => ({ id: s, label: SOURCE_NAMES[s], c: SRC[s].c, c2: SRC[s].c2, value: failed.includes(s) || state(s) === 'off' ? 0 : sum(rows.map((r) => count(r, s))) }));
   const total = sum(parts.map((p) => p.value));
+  const spanWord = span === 'week' ? W.this : span === '4w' ? `in the last 4 ${W.us}` : `in all ${LABELS.length} ${W.us}`;
   return (
-    <Panel n={7} title="By platform" body="grid content-start gap-4 p-6">
+    <Panel n={7} title="By platform" right={<span className="font-mono text-[10.5px] text-faint">click a platform to see its complaints</span>} body="grid content-start gap-4 p-6">
       <Tabs value={span} onChange={setSpan} label="Time span" options={[['week', W.u === 'period' ? 'This period' : W.u[0].toUpperCase() + W.u.slice(1)], ['4w', `Last 4 ${W.us}`], ['8w', `All ${LABELS.length} ${W.us}`]]} />
-      <div className="grid items-center justify-items-center gap-4 sm:grid-cols-[auto_1fr] sm:justify-items-start">
+      <div className="grid items-start justify-items-center gap-4 sm:grid-cols-[auto_1fr] sm:justify-items-stretch">
         <ThinDonut parts={parts} total={total} size={156} centerLabel="complaints" />
-        <ul className="grid w-full gap-2">
-          {platforms.map((p) => { const part = parts.find((x) => x.id === p.id); return (
-            <li key={p.id} className="flex items-center justify-between gap-2 text-[12.5px]" title={p.why}>
-              <span className="flex min-w-0 items-center gap-2">{p.state === 'live' ? <SrcDot s={p.id} /> : <i className="h-2 w-2 rounded-full border-[1.5px] border-faint" />}<span className={p.state === 'live' ? '' : 'text-faint'}>{p.name}</span></span>
-              <span className={`font-mono text-[12px] ${p.state === 'down' ? 'text-alert-ink' : p.state === 'live' ? 'text-ink' : 'text-faint'}`}>{p.state === 'live' ? part.value : P_STATE[p.state].w}</span>
-            </li>
-          ); })}
+        <ul className="grid w-full gap-1">
+          {platforms.map((p) => {
+            const part = parts.find((x) => x.id === p.id); const live = p.state === 'live';
+            const list = live ? rows.map((r) => ({ r, n: count(r, p.id) })).filter((x) => x.n > 0).sort((a, b) => b.n - a.n) : [];
+            const isOpen = openP === p.id && live;
+            return (
+              <li key={p.id} className={`rounded-[10px] ${isOpen ? 'bg-surface-2' : ''}`} title={live ? undefined : p.why}>
+                <button disabled={!live || !part.value} onClick={() => setOpenP(isOpen ? null : p.id)} aria-expanded={isOpen}
+                  className="flex w-full items-center justify-between gap-2 rounded-[10px] px-2 py-1.5 text-left text-[12.5px] enabled:hover:bg-surface-2 disabled:cursor-default">
+                  <span className="flex min-w-0 items-center gap-2">{live ? <SrcDot s={p.id} /> : <i className="h-2 w-2 rounded-full border-[1.5px] border-faint" />}<span className={live ? '' : 'text-faint'}>{p.name}</span></span>
+                  <span className="flex items-center gap-2">
+                    <span className={`font-mono text-[12px] ${p.state === 'down' ? 'text-alert-ink' : live ? 'text-ink' : 'text-faint'}`}>{live ? part.value : P_STATE[p.state].w}</span>
+                    {live && part.value > 0 && <span aria-hidden="true" className={`text-[10px] text-faint transition-transform ${isOpen ? 'rotate-180' : ''}`}>▾</span>}
+                  </span>
+                </button>
+                {isOpen && (
+                  <ul className="grid gap-1 px-2 pb-2 pt-0.5">
+                    {list.map(({ r, n }) => (
+                      <li key={r.p.id} className="flex items-center justify-between gap-2 text-[12px]">
+                        <button onClick={() => onPick(r.p.id)} className="flex min-w-0 items-center gap-1.5 text-left text-muted hover:text-ink hover:underline"><Glyph kind={CAT_STYLE[r.p.cat].glyph} color={CAT_STYLE[r.p.cat].c2} size={10} /><span className="truncate">{r.p.title}</span></button>
+                        <span className="shrink-0 font-mono text-[11px] text-ink">{n}</span>
+                      </li>
+                    ))}
+                    <li className="pt-1 text-[10.5px] text-faint">{list.length} problem{list.length === 1 ? '' : 's'} raised on {p.name} {spanWord}</li>
+                  </ul>
+                )}
+              </li>
+            );
+          })}
         </ul>
       </div>
     </Panel>
@@ -638,15 +583,32 @@ function Connections({ data, healthInfo, compact, srcSel, toggleSrc, n = 10 }) {
 }
 
 /* ── trends view ── */
-function TrendChart({ rows, weeks }) {
+/* weekly / monthly switch shared by the trend chart and the heatmap */
+function GrainSwitch({ value, onChange, options, busy }) {
+  return (
+    <div className="flex items-center gap-2">
+      <span className="hidden font-mono text-[10.5px] uppercase tracking-[.1em] text-faint sm:inline">Compare</span>
+      <div className="flex rounded-full border border-line p-[3px]" role="group" aria-label="Compare by">
+        {options.map(([k, l]) => <button key={k} onClick={() => onChange(k)} aria-pressed={value === k} className={seg(value === k)}>{l}</button>)}
+      </div>
+      {busy && <span className="spin inline-block h-3 w-3 rounded-full border-2 border-ink/30 border-t-ink" aria-label="Loading" />}
+    </div>
+  );
+}
+
+function TrendChart({ rows, labels, unit, switcher }) {
   const ranked = [...rows].sort((a, b) => priority(b.p.rel, b.p.unresolved, b.st) - priority(a.p.rel, a.p.unresolved, a.st));
   const [picked, setPicked] = useState(null);
-  const ids = picked || ranked.slice(0, 3).map((r) => r.p.id);
+  const ids = (picked || ranked.slice(0, 3).map((r) => r.p.id)).filter((id) => rows.some((r) => r.p.id === id));
   const toggle = (id) => setPicked((cur) => { const base = cur || ids; return base.includes(id) ? base.filter((x) => x !== id) : [...base, id].slice(-4); });
   const series = ids.map((id, i) => { const r = rows.find((x) => x.p.id === id); return r && { id, label: r.p.title, short: r.p.title.split(' ').slice(0, 4).join(' '), values: r.p.s, color: SERIES_COLORS[i % 4] }; }).filter(Boolean);
+  const us = unit === 'period' ? 'periods' : `${unit}s`;
   return (
-    <Panel n={1} title={`${LABELS.length}-${W.u} view`} right={<span className="hidden text-[11.5px] text-faint sm:inline">Pick up to 4 · hover a {W.u} for exact counts</span>} body="grid min-w-0 gap-4 p-6">
-      <h2 className="text-[20px] font-semibold">How the conversation is moving</h2>
+    <Panel n={1} title={`${labels.length}-${unit} view`} right={switcher} body="grid min-w-0 gap-4 p-6">
+      <div className="flex flex-wrap items-baseline justify-between gap-2">
+        <h2 className="text-[20px] font-semibold">How the conversation is moving</h2>
+        <span className="text-[11.5px] text-faint">Pick up to 4 · hover a {unit} for exact counts</span>
+      </div>
       <div className="flex flex-wrap gap-1.5" role="group" aria-label="Pain points shown on chart">
         {ranked.map((r) => { const on = ids.includes(r.p.id); const i = ids.indexOf(r.p.id); return (
           <button key={r.p.id} onClick={() => toggle(r.p.id)} aria-pressed={on} className={chip(on)}>
@@ -654,83 +616,115 @@ function TrendChart({ rows, weeks }) {
           </button>
         ); })}
       </div>
-      {series.length ? <FlowChart series={series} labels={LABELS} prefix={W.u === 'week' ? 'Week of ' : ''} /> : <p className="py-10 text-center text-muted">Pick a pain point above to plot it.</p>}
+      {series.length ? <FlowChart series={series} labels={labels} prefix={unit === 'week' ? 'Week of ' : ''} /> : <p className="py-10 text-center text-muted">Pick a pain point above to plot it.</p>}
+      {series.length > 0 && (
+        <div className="overflow-x-auto border-t border-line pt-3">
+          <table className="w-full min-w-[520px] text-left text-[12px]">
+            <thead><tr className="font-mono text-[10px] uppercase tracking-[.1em] text-faint"><th className="pb-1.5 font-normal">Compared</th><th className="pb-1.5 text-right font-normal">Latest {unit}</th><th className="pb-1.5 text-right font-normal">Previous</th><th className="pb-1.5 text-right font-normal">Change</th><th className="pb-1.5 text-right font-normal">Average of all {labels.length} {us}</th></tr></thead>
+            <tbody>
+              {series.map((x) => { const v = x.values; const cur = v[v.length - 1] || 0, prev = v[v.length - 2] || 0; const avg = sum(v) / Math.max(1, v.length); const d = cur - prev; return (
+                <tr key={x.id} className="border-t border-line">
+                  <td className="py-1.5 pr-3"><span className="inline-flex items-center gap-2"><i className="h-2 w-2 rounded-full" style={{ background: x.color }} />{x.label}</span></td>
+                  <td className="py-1.5 text-right font-mono">{cur}</td>
+                  <td className="py-1.5 text-right font-mono text-muted">{prev}</td>
+                  <td className="py-1.5 text-right font-mono" style={{ color: d > 0 ? 'var(--alert-ink)' : d < 0 ? 'var(--ok)' : undefined }}>{d > 0 ? '▲ +' : d < 0 ? '▼ ' : '■ '}{d}{prev ? ` (${d > 0 ? '+' : ''}${Math.round((d / prev) * 100)}%)` : ''}</td>
+                  <td className="py-1.5 text-right font-mono text-muted">{avg.toFixed(1)}</td>
+                </tr>
+              ); })}
+            </tbody>
+          </table>
+        </div>
+      )}
     </Panel>
   );
 }
 
-function ActivityHeatmap({ rows, weeks, onPick }) {
+function ActivityHeatmap({ rows, labels, unit, onPick }) {
   const list = [...rows].sort((a, b) => sum(b.p.s) - sum(a.p.s));
   return (
-    <Panel n={2} title={`Activity · ${LABELS.length} ${W.us}`} right={<span className="hidden font-mono text-[10.5px] text-faint sm:inline">colour = topic · intensity = threads</span>} body="grid min-w-0 gap-4 p-6">
-      <Heatmap rows={list.map((r) => ({ id: r.p.id, label: r.p.title, values: r.p.s, c: CAT_STYLE[r.p.cat].c, glyph: CAT_STYLE[r.p.cat].glyph }))} cols={LABELS} onPick={onPick} />
+    <Panel n={2} title={`Activity · ${labels.length} ${unit === 'period' ? 'periods' : `${unit}s`}`} right={<span className="hidden font-mono text-[10.5px] text-faint sm:inline">colour = topic · intensity = threads</span>} body="grid min-w-0 gap-4 p-6">
+      <Heatmap rows={list.map((r) => ({ id: r.p.id, label: r.p.title, values: r.p.s, c: CAT_STYLE[r.p.cat].c, glyph: CAT_STYLE[r.p.cat].glyph }))} cols={labels} onPick={onPick} />
     </Panel>
   );
 }
 
-function Detail({ p, st, inList, addShort, openDraft, dismiss, weeks }) {
+/* expanded row: 1 the numbers in one line · 2 what developers say + the trend · 3 the threads · 4 our angle and actions */
+function Detail({ p, st, inList, addShort, openDraft, dismiss }) {
   const max = Math.max(...p.s, 1);
+  const srcs = SOURCES.filter((s) => (p.bySource[s]?.[L] || 0) > 0);
+  const facts = [
+    [`Threads ${W.this}`, st.cur, `${st.cur - st.prev >= 0 ? '+' : ''}${st.cur - st.prev} vs ${W.last}`],
+    ['Vs normal', st.mean ? `${st.ratio.toFixed(1)}×` : 'new', `normal is ${st.mean.toFixed(1)} a ${W.u}`],
+    ['Developers', p.voices, `${p.communities} platform${p.communities === 1 ? '' : 's'}`],
+    ['Unsolved', `${p.unresolved}%`, 'no fix or accepted answer'],
+  ];
   return (
-    <div className="grid gap-6 bg-sunk px-5 py-5 md:grid-cols-[1.3fr_1fr]">
-      <div className="grid min-w-0 content-start gap-4">
-        {p.insight && (
-          <div className="grid gap-3 rounded-[12px] border border-line bg-surface p-4">
-            <Layer k="What developers say" tag={`AI · ${p.insight.threads_used} threads`}>{p.insight.summary}</Layer>
-            {p.insight.gap && <Layer k="Gap they describe" tag="AI">{p.insight.gap}</Layer>}
-            <Layer k="Worth investigating" tag="AI suggestion">{p.insight.next_step}</Layer>
+    <div className="grid gap-5 bg-sunk px-5 py-5">
+      <dl className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+        {facts.map(([k, v, n]) => (
+          <div key={k} className="rounded-[12px] border border-line bg-surface px-3 py-2">
+            <dt className="font-mono text-[10px] uppercase tracking-[.1em] text-faint">{k}</dt>
+            <dd className="font-mono text-[20px] font-semibold leading-tight">{v}</dd>
+            <dd className="text-[11px] text-faint">{n}</dd>
           </div>
-        )}
-        <div>
-          <Eyebrow>Source threads</Eyebrow>
-          {p.evidence.length === 0 ? <p className="mt-2 text-[13px] text-muted">No threads for this pain point in the last four {W.us}.</p> : (
-            <ul className="mt-2 grid gap-2 sm:grid-cols-2">
-              {p.evidence.map((e) => (
-                <li key={e.url} className="grid content-start gap-1 rounded-[12px] border border-line bg-surface p-3 text-[12.5px]">
-                  <a href={e.url} target="_blank" rel="noopener noreferrer" className="font-medium text-ink hover:underline">{e.title} ↗</a>
-                  {e.quote && <div className="line-clamp-2 text-muted">"{e.quote}"</div>}
-                  <span className="mt-1 inline-flex items-center gap-1.5 font-mono text-[10.5px] text-faint"><SrcDot s={e.platform} size={7} />{SOURCE_NAMES[e.platform]} · {d8(e.day || e.week)}</span>
-                </li>
-              ))}
-            </ul>
-          )}
+        ))}
+      </dl>
+      <div className="grid gap-5 md:grid-cols-[1.3fr_1fr]">
+        <div className="grid content-start gap-3 rounded-[12px] border border-line bg-surface p-4">
+          {p.insight ? (<>
+            <Layer k="What developers say" tag={`AI · ${p.insight.threads_used} threads`}>{p.insight.summary}</Layer>
+            {p.insight.gap && <Layer k="What is missing today">{p.insight.gap}</Layer>}
+            <Layer k="Worth investigating" tag="AI suggestion">{p.insight.next_step}</Layer>
+          </>) : <p className="text-[12.5px] text-muted">No AI summary for this {W.u} yet. Use "Summarise the threads" on the Brief page.</p>}
         </div>
-        <dl className="grid gap-1 text-[12.5px]">
-          <dt className="font-mono text-[10px] uppercase tracking-[.12em] text-faint">Team notes (not from {W.this}'s data)</dt>
-          <Def t="Hits hardest" d={p.suits} />
-          <Def t="Less relevant for" d={p.notFor} />
-          <Def t="Our angle" d={p.angle} />
-        </dl>
-        <div className="flex flex-wrap gap-2">
-          <Btn size="sm" kind={inList ? 'secondary' : 'primary'} disabled={inList} onClick={() => addShort(p.id)}>{inList ? 'In team vote ✓' : 'Put to team vote'}</Btn>
-          <Btn size="sm" onClick={() => openDraft([p.id])}>Draft sprint brief</Btn>
-          <Btn size="sm" kind="danger" onClick={() => dismiss(p.id)}>Not our problem, hide</Btn>
-        </div>
-      </div>
-      <div className="grid min-w-0 content-start gap-4">
-        <div>
-          <Eyebrow>Unique threads per {W.u}</Eyebrow>
-          <div className="mt-3 grid h-[96px] items-end gap-2" style={{ gridTemplateColumns: `repeat(${p.s.length}, minmax(0, 1fr))` }}>
+        <div className="grid content-start gap-2">
+          <div className="flex items-baseline justify-between gap-2"><Eyebrow>Threads per {W.u}</Eyebrow>{srcs.length > 0 && <span className="flex flex-wrap gap-2 text-[10.5px] text-faint">{srcs.map((s) => <span key={s} className="inline-flex items-center gap-1"><SrcDot s={s} size={6} />{SRC[s].abbr} {p.bySource[s][L]}</span>)}</span>}</div>
+          <div className="grid h-[88px] items-end gap-2" style={{ gridTemplateColumns: `repeat(${p.s.length}, minmax(0, 1fr))` }}>
             {p.s.map((v, i) => (
               <div key={i} className="flex h-full flex-col items-center justify-end gap-1">
                 <span className="font-mono text-[10px] text-muted">{v}</span>
                 <div className="relative mx-auto w-3 flex-1 overflow-hidden rounded-full bg-track"><div className="absolute inset-x-0 bottom-0 rounded-full" style={{ height: `${(v / max) * 100}%`, background: i === L ? `linear-gradient(0deg, ${CAT_STYLE[p.cat].c}, ${CAT_STYLE[p.cat].c2})` : 'var(--line-strong)', transition: 'height .5s var(--ease)' }} /></div>
               </div>))}
           </div>
-          <div className="mt-1 grid gap-2" style={{ gridTemplateColumns: `repeat(${p.s.length}, minmax(0, 1fr))` }}>{LABELS.map((w) => <span key={w} className="truncate text-center font-mono text-[9px] text-faint">{w}</span>)}</div>
+          <div className="grid gap-2" style={{ gridTemplateColumns: `repeat(${p.s.length}, minmax(0, 1fr))` }}>{LABELS.map((w) => <span key={w} className="truncate text-center font-mono text-[9px] text-faint">{w}</span>)}</div>
+          <p className="text-[11px] text-faint" title={`Unusualness score ${st.z.toFixed(2)}: 2 or more is very unlikely to be random wobble.`}>{trendWords(st, W.u)} · unusualness {st.z.toFixed(1)} ⓘ</p>
         </div>
-        <dl className="grid grid-cols-2 gap-x-4 gap-y-1.5 text-[12.5px]">
-          <dt className="text-muted">Normal ({Math.min(4, L)}-{W.u} avg)</dt><dd className="text-right font-mono">{st.mean.toFixed(1)}</dd>
-          <dt className="text-muted">{W.This} vs normal</dt><dd className="text-right font-mono">{st.mean ? `${st.ratio.toFixed(2)}×` : 'new'}</dd>
-          <dt className="text-muted" title={`How unusual ${W.this} is. 2 or more is very unlikely to be random wobble.`}>Unusualness score ⓘ</dt><dd className="text-right font-mono">{st.z.toFixed(2)}</dd>
-          <dt className="text-muted">Different developers</dt><dd className="text-right font-mono">{p.voices}</dd>
-        </dl>
-        <div className="grid grid-cols-4 gap-3 border-t border-line pt-3">
-          {SOURCES.map((s) => (
-            <div key={s} className="min-w-0"><div className="truncate font-mono text-[9.5px] uppercase tracking-[.08em] text-faint">{SRC[s].abbr} · {SOURCE_NAMES[s].split(' ')[0]}</div><div className="font-mono text-[18px] font-semibold">{p.bySource[s]?.[L] || 0}</div><div className="mt-1 h-[3px] rounded-full" style={{ background: `linear-gradient(90deg, ${SRC[s].c}, ${SRC[s].c2})` }} /></div>
-          ))}
+      </div>
+      <div className="grid gap-2">
+        <Eyebrow>The threads behind it</Eyebrow>
+        {p.evidence.length === 0 ? <p className="text-[13px] text-muted">No threads for this pain point in the last four {W.us}.</p> : (
+          <ul className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
+            {p.evidence.slice(0, 6).map((e) => (
+              <li key={e.url} className="grid content-start gap-1 rounded-[12px] border border-line bg-surface p-3 text-[12.5px]">
+                <a href={e.url} target="_blank" rel="noopener noreferrer" className="font-medium text-ink hover:underline">{e.title} ↗</a>
+                {e.quote && <div className="line-clamp-2 text-muted">"{e.quote}"</div>}
+                <span className="mt-1 inline-flex items-center gap-1.5 font-mono text-[10.5px] text-faint"><SrcDot s={e.platform} size={7} />{SOURCE_NAMES[e.platform]} · {d8(e.day || e.week)}</span>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+      <div className="flex flex-wrap items-center justify-between gap-3 border-t border-line pt-4">
+        <p className="max-w-[70ch] text-[12.5px]"><span className="font-medium">Our angle: </span><span className="text-muted">{p.angle}</span> <span className="text-faint">· hits hardest for {p.suits?.replace(/\.$/, '').toLowerCase()}</span></p>
+        <div className="flex flex-wrap gap-2">
+          <Btn size="sm" kind={inList ? 'secondary' : 'primary'} disabled={inList} onClick={() => addShort(p.id)}>{inList ? 'In team vote ✓' : 'Put to team vote'}</Btn>
+          <Btn size="sm" onClick={() => openDraft([p.id])}>Draft sprint brief</Btn>
+          <Btn size="sm" kind="danger" onClick={() => dismiss(p.id)}>Not our problem, hide</Btn>
         </div>
       </div>
     </div>
+  );
+}
+
+const SORT_WHY = { priority: 'size × growth × unsolved × product fit', cur: 'most threads first', change: 'biggest rise or fall first', unres: 'least solved first' };
+function SortTh({ k, sort, setSort, right, className = 'px-2', title, children }) {
+  const on = sort === k;
+  return (
+    <th className={`${className} py-2.5 font-normal ${right ? 'text-right' : ''}`} aria-sort={on ? 'descending' : 'none'}>
+      <button onClick={() => setSort(k)} title={title || `Sort by ${typeof children === 'string' ? children.toLowerCase() : 'this column'}`} className={`inline-flex items-center gap-1 uppercase tracking-[.1em] hover:text-ink ${on ? 'text-ink' : ''}`}>
+        {children}<span aria-hidden="true" className={on ? 'text-orange-ink' : 'opacity-30'}>▼</span>
+      </button>
+    </th>
   );
 }
 
@@ -752,7 +746,7 @@ function Leaderboard(props) {
           <span className="font-mono text-[10.5px] uppercase tracking-[.1em] text-faint">Evidence</span>
           <div className="flex flex-wrap items-center gap-2">
             <div className="flex flex-wrap rounded-full border border-line p-[3px]" role="group" aria-label="Evidence level">
-              {Object.entries(MODES).map(([k, m]) => <button key={k} onClick={() => setMode(k)} aria-pressed={mode === k} className={seg(mode === k)}>{m.label} <span className="font-mono opacity-70">· {m.hint}</span></button>)}
+              {Object.entries(MODES).map(([k, m]) => <button key={k} onClick={() => setMode(k)} aria-pressed={mode === k} className={seg(mode === k)}>{m.label} <span className="font-mono opacity-70">· {evHint(k)}{EV > 1 && k !== 'exploratory' ? ` per ${W.u === 'period' ? 'period' : W.u}` : ''}</span></button>)}
             </div>
             {extraIfLooser > 0 && <button onClick={() => setMode('exploratory')} className="text-[12px] text-link underline underline-offset-2">+{extraIfLooser} more qualify with Early signals</button>}
           </div>
@@ -771,7 +765,8 @@ function Leaderboard(props) {
                 className={down ? 'inline-flex h-7 cursor-not-allowed items-center gap-1.5 rounded-full border-[1.5px] border-dashed border-alert/60 px-3 text-[11.5px] text-alert-ink' : off ? 'inline-flex h-7 cursor-not-allowed items-center gap-1.5 rounded-full border-[1.5px] border-dashed border-line px-3 text-[11.5px] text-faint' : `${chip(on)} ${on ? '' : 'line-through'}`}><SrcDot s={s} size={7} />{SOURCE_NAMES[s]}{down ? ' · not responding' : off ? ' · not connected' : ''}</button>
             ); })}
             <label htmlFor="sort" className="sr-only">Sort by</label>
-            <select id="sort" value={sort} onChange={(e) => setSort(e.target.value)} className="ml-auto h-8 rounded-full border-[1.5px] border-line-strong bg-transparent px-3.5 text-[11.5px] text-ink">
+            <span className="ml-auto hidden font-mono text-[10.5px] text-faint lg:inline" aria-live="polite">{SORT_WHY[sort]}</span>
+            <select id="sort" value={sort} onChange={(e) => setSort(e.target.value)} className="ml-auto h-8 rounded-full border-[1.5px] border-line-strong bg-transparent px-3.5 text-[11.5px] text-ink lg:ml-0">
               <option className="bg-surface" value="priority">Sort: what to act on</option>
               <option className="bg-surface" value="cur">Sort: most threads</option>
               <option className="bg-surface" value="change">Sort: biggest change</option>
@@ -801,14 +796,14 @@ function Leaderboard(props) {
           <table className="w-full min-w-[900px] text-left">
             <thead>
               <tr className="bg-surface-2 font-mono text-[10px] uppercase tracking-[.1em] text-faint">
-                <th className="w-10 px-5 py-2.5 font-normal">#</th>
+                <SortTh k="priority" sort={sort} setSort={setSort} className="w-10 px-5" title="Rank by what to act on">#</SortTh>
                 <th className="px-2 py-2.5 font-normal">Pain point</th>
                 <th className="px-2 py-2.5 font-normal">Topic</th>
-                <th className="px-2 py-2.5 text-right font-normal">Threads</th>
-                <th className="px-2 py-2.5 text-right font-normal">{cmp === 'wow' ? `vs ${W.last}` : 'vs normal'}</th>
+                <SortTh k="cur" sort={sort} setSort={setSort} right>Threads</SortTh>
+                <SortTh k="change" sort={sort} setSort={setSort} right>{cmp === 'wow' ? `vs ${W.last}` : 'vs normal'}</SortTh>
                 <th className="px-2 py-2.5 font-normal">{LABELS.length} {W.us}</th>
                 <th className="px-2 py-2.5 font-normal">Signal</th>
-                <th className="px-5 py-2.5 text-right font-normal">Unsolved</th>
+                <SortTh k="unres" sort={sort} setSort={setSort} right className="px-5">Unsolved</SortTh>
               </tr>
             </thead>
             <tbody>
@@ -825,14 +820,14 @@ function Leaderboard(props) {
                         <div className="mt-1 flex flex-wrap items-center gap-2 text-[11px] text-faint"><RelTag rel={p.rel} /><span className="font-mono">{p.voices} dev · {p.communities} comm</span>{shortIds.includes(p.id) && <StatusDot color="var(--ok)" word="In team vote" />}</div>
                       </td>
                       <td className="px-2 py-3 align-middle"><TopicPill cat={p.cat} /></td>
-                      <td className="px-2 py-3 text-right align-middle">
+                      <td className={`px-2 py-3 text-right align-middle ${sort === 'cur' ? 'bg-surface-2/60' : ''}`}>
                         <div className="ml-auto grid w-24 justify-items-end gap-1">
                           <span className="font-mono text-[16px] font-semibold">{st.cur}</span>
                           <div className="h-1 w-full overflow-hidden rounded-full bg-track"><div className="ml-auto h-full rounded-full" style={{ width: `${(st.cur / maxCur) * 100}%`, background: `linear-gradient(90deg, ${CAT_STYLE[p.cat].c}, ${CAT_STYLE[p.cat].c2})` }} /></div>
                           <span className="font-mono text-[10px] text-faint">{cmp === 'wow' ? `was ${st.prev}` : `normal ${st.mean.toFixed(1)}`}</span>
                         </div>
                       </td>
-                      <td className="px-2 py-3 text-right align-middle font-mono text-[12.5px]" style={{ color: t.ink }}>
+                      <td className={`px-2 py-3 text-right align-middle font-mono text-[12.5px] ${sort === 'change' ? 'bg-surface-2/60' : ''}`} style={{ color: t.ink }}>
                         {cmp === 'wow' ? `${sym || (st.cur - st.prev > 0 ? '▲' : st.cur - st.prev < 0 ? '▼' : '■')} ${st.cur - st.prev > 0 ? '+' : ''}${st.cur - st.prev}` : (delta == null ? (st.cur > 0 ? 'new' : '–') : `${sym} ${delta > 0 ? '+' : ''}${delta}%`)}
                         {cmp === 'wow' && <div className="text-[10.5px] opacity-80">{delta == null ? (st.cur > 0 ? 'new' : '') : `${delta > 0 ? '+' : ''}${delta}%`}</div>}
                       </td>
@@ -841,7 +836,7 @@ function Leaderboard(props) {
                         {p.voices < 2 && st.cur > 0 ? <FewVoices n={p.voices} /> : <TrendPill label={st.label} />}
                         {st.label === 'Steady' && p.voices >= 2 && Math.abs(delta || 0) >= 30 && <div className="mt-1 text-[10.5px] text-faint">Big % on small numbers</div>}
                       </td>
-                      <td className="px-5 py-3 text-right align-middle">
+                      <td className={`px-5 py-3 text-right align-middle ${sort === 'unres' ? 'bg-surface-2/60' : ''}`}>
                         <div className="ml-auto grid w-20 justify-items-end gap-1">
                           <span className="font-mono text-[12.5px]" style={{ color: p.unresolved >= 70 ? 'var(--alert-ink)' : undefined }}>{p.unresolved}%</span>
                           <div className="h-1 w-full overflow-hidden rounded-full bg-track"><div className="h-full rounded-full" style={{ width: `${p.unresolved}%`, background: p.unresolved >= 70 ? 'var(--alert)' : 'var(--steady)' }} /></div>
@@ -1083,6 +1078,9 @@ export default function Dashboard() {
   const [srcSel, setSrcSel] = useState(SOURCES); const [sort, setSort] = useState('priority'); const [open, setOpen] = useState(null);
   const [dismissed, setDismissed] = useState([]); const [showHidden, setShowHidden] = useState(false);
   const [short, setShort] = useState({ items: [] }); const [shortBusy, setShortBusy] = useState(false);
+  const [comments, setComments] = useState([]);
+  const [people, setPeople] = useState([]);
+  const [chartGrain, setChartGrain] = useState(null); const [alt, setAlt] = useState(null); const [altBusy, setAltBusy] = useState(false);
   const [viewer, setViewerState] = useState('sumit');
   const [terms, setTerms] = useState([]); const [termsError, setTermsError] = useState(null);
   const [draft, setDraft] = useState(null);
@@ -1099,14 +1097,19 @@ export default function Dashboard() {
   }, []);
   const loadCal = useCallback(async () => { try { setCal(await api('calendar')); } catch (e) { toast(`Calendar could not load: ${e.message}`); } }, []); // eslint-disable-line react-hooks/exhaustive-deps
   const loadTerms = useCallback(async () => { try { const r = await api('watchlist'); setTerms(r.terms); setTermsError(null); } catch (e) { setTermsError(e.message); } }, []);
-  const loadShort = useCallback(async (w) => { if (!w) return; try { setShort(await api(`shortlist?week=${w}`)); } catch (e) { toast(e.message); } }, [toast]);
+  const loadShort = useCallback(async (w) => {
+    if (!w) return;
+    try { setShort(await api(`shortlist?week=${w}`)); } catch (e) { toast(e.message); }
+    try { setComments((await api(`comments?week=${w}`)).comments); } catch {}
+  }, [toast]);
 
   useEffect(() => {
     const h = (location.hash || '').slice(1); if (VIEWS.some(([k]) => k === h)) setViewState(h);
-    setViewerState(store.get('pulse-viewer', 'sumit'));
+    { const v = store.get('pulse-viewer', 'sumit'); setViewerState(TEAM_BY_ID[v] ? v : 'sumit'); }
     try { setDismissed(JSON.parse(store.get('pulse-dismissed', '[]'))); } catch {}
     loadBrief().then((d) => d && loadShort(d.week || d.latest));
     loadTerms();
+    api('team').then((r) => setPeople(r.people)).catch(() => {});
     api('health').then(setHealthInfo).catch((e) => setHealthInfo({ db: { ok: false, error: e.message }, gemini: {} }));
   }, [loadBrief, loadShort, loadTerms]);
 
@@ -1124,11 +1127,14 @@ export default function Dashboard() {
     return { p: { ...p, s }, st: stats(s) };
   }) : []), [data, effKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  { const pd = data?.period; EV = !pd || pd.grain === 'week' ? 1 : pd.grain === 'month' ? 4 : Math.max(1, Math.round((pd.days || 7) / 7)); }
   const visible = base.filter((r) => (cat === 'all' || r.p.cat === cat) && eff.length > 0 && (showHidden || !dismissed.includes(r.p.id)));
-  const qualifying = visible.filter((r) => r.st.cur >= MODES[mode].min);
-  const extraIfLooser = mode === 'exploratory' ? 0 : visible.filter((r) => r.st.cur >= MODES.exploratory.min).length - qualifying.length;
-  const sorters = { priority: (r) => priority(r.p.rel, r.p.unresolved, r.st), cur: (r) => r.st.cur, change: (r) => Math.abs(cmp === 'wow' ? r.st.wow || 0 : (r.st.ratio - 1) * 100), unres: (r) => r.p.unresolved };
-  const rows = [...qualifying].sort((a, b) => sorters[sort](b) - sorters[sort](a) || b.st.cur - a.st.cur);
+  const qualifying = visible.filter((r) => r.st.cur >= evMin(mode));
+  const extraIfLooser = mode === 'exploratory' ? 0 : visible.filter((r) => r.st.cur >= evMin('exploratory')).length - qualifying.length;
+  // change = absolute thread difference first (a +300% on 1→4 should not beat +12 threads), then the % move
+  const chg = (r) => (cmp === 'wow' ? Math.abs(r.st.cur - r.st.prev) : Math.abs(r.st.cur - r.st.mean)) * 1000 + Math.abs(cmp === 'wow' ? r.st.wow || 0 : (r.st.ratio - 1) * 100);
+  const sorters = { priority: (r) => priority(r.p.rel, r.p.unresolved, r.st), cur: (r) => r.st.cur, change: chg, unres: (r) => r.p.unresolved * 1000 + r.st.cur };
+  const rows = [...qualifying].sort((a, b) => sorters[sort](b) - sorters[sort](a) || b.st.cur - a.st.cur || a.p.title.localeCompare(b.p.title));
   const topPool = base.filter((r) => !dismissed.includes(r.p.id));
   const titles = Object.fromEntries((data?.pains || []).map((p) => [p.id, p.title]));
   const shortIds = short.items.map((x) => x.id);
@@ -1148,7 +1154,16 @@ export default function Dashboard() {
     setShortBusy(true);
     try { setShort(await api('shortlist', { ...body, week: voteWeek })); if (msg) toast(msg); } catch (e) { toast(e.message); } finally { setShortBusy(false); }
   };
-  const addShort = (id) => shortAct({ op: 'add', id }, 'Put to team vote');
+  const addShort = async (id) => { await shortAct({ op: 'add', id }, 'Put to team vote'); try { setComments((await api(`comments?week=${voteWeek}`)).comments); } catch {} };
+  const postComment = async ({ id, body, parent }) => {
+    try { setComments((await api('comments', { week: voteWeek, id, body, parent, author: viewer })).comments); return true; } catch (e) { toast(e.message); return false; }
+  };
+  const saveProfile = async (body) => {
+    try { setPeople((await api('team', body)).people); toast('Your profile is saved and visible to the whole team'); return true; } catch (e) { toast(e.message); return false; }
+  };
+  const deleteComment = async (cid) => {
+    try { setComments((await api('comments', { op: 'delete', week: voteWeek, cid, author: viewer })).comments); toast('Comment deleted'); } catch (e) { toast(e.message); }
+  };
   const dismiss = (id) => { const next = [...dismissed, id]; saveDismissed(next); setOpen(null); toast('Hidden from this brief', () => saveDismissed(next.filter((x) => x !== id))); };
   const focusRow = (id) => { setView('trends'); setCat('all'); setMode('exploratory'); setShowHidden(true); setOpen(id); setTimeout(() => document.getElementById(`row-${id}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' }), 120); };
   const toggleSrc = (s) => setSrcSel((ss) => (ss.includes(s) ? ss.filter((x) => x !== s) : [...ss, s]));
@@ -1244,6 +1259,26 @@ export default function Dashboard() {
     finally { setRunning(false); setHistBusy(false); }
   };
 
+  // trend chart + heatmap can be compared week by week or month by month, whatever period the page shows
+  const pageGrain = period?.grain || 'week';
+  const grainOptions = [['week', 'Week by week'], ['month', 'Month by month'], ...(pageGrain === 'custom' ? [['custom', 'Your range']] : [])];
+  const cg = chartGrain && grainOptions.some(([k]) => k === chartGrain) ? chartGrain : pageGrain;
+  const altQ = !data ? null : cg === 'week' ? { grain: 'week', week: data.week || data.latest } : cg === 'month' ? { grain: 'month', month: pageGrain === 'month' ? period.key.slice(2) : data.lastMonth } : null;
+  const altKey = altQ ? JSON.stringify(altQ) : '';
+  useEffect(() => {
+    if (!data || cg === pageGrain || !altQ || alt?.key === altKey) return;
+    let live = true; setAltBusy(true);
+    api(`brief${qs(altQ)}`).then((d) => live && setAlt({ key: altKey, data: d })).catch((e) => live && toast(`Could not load the ${cg}ly view: ${e.message}`)).finally(() => live && setAltBusy(false));
+    return () => { live = false; };
+  }, [altKey, cg, pageGrain, data]); // eslint-disable-line react-hooks/exhaustive-deps
+  const pickGrain = (k) => setChartGrain(k);
+  const chart = (() => {
+    const d = cg !== pageGrain && alt?.key === altKey ? alt.data : data;
+    if (!d) return { key: 'none', rows: [], labels: [], unit: 'week', grain: cg };
+    const rows = d.pains.filter((p) => !dismissed.includes(p.id)).map((p) => { const s = d.weeks.map((_, i) => eff.reduce((a, src) => a + (p.bySource[src]?.[i] || 0), 0)); return { p: { ...p, s }, st: stats(s) }; });
+    return { key: d.period?.key || 'p', rows, labels: d.labels || d.weeks.map(d8), unit: d.period?.unit || 'week', grain: cg };
+  })();
+
   const empty = data && data.totalThreads === 0;
   const weekLabel = week ? range(week) : '';
   // words and bucket count for whatever period is on screen
@@ -1259,14 +1294,13 @@ export default function Dashboard() {
       <main className="mx-auto grid max-w-[1320px] gap-4 px-4 py-6 sm:px-6">
         <div className="relative flex flex-wrap items-end justify-between gap-3 py-2">
           <div className="relative z-[1] min-w-0">
-            <Eyebrow>{view === 'brief' ? eyebrow : `Pulse · ${VIEWS.find(([k]) => k === view)[1]}${period && period.grain !== 'week' && view === 'trends' ? ` · ${period.label}` : ''}`}</Eyebrow>
-            <h1 className="mt-2 text-[28px] font-semibold leading-tight sm:text-[34px]">{view === 'brief' ? 'What developers are struggling with right now' : VIEWS.find(([k]) => k === view)[1]}</h1>
+            <Eyebrow>{view === 'brief' ? eyebrow : `Pulse · ${VIEWS.find(([k]) => k === view)[1]}${period && period.grain !== 'week' && (view === 'trends' || view === 'opportunities') ? ` · ${period.label}` : ''}`}</Eyebrow>
+            <h1 className="mt-2 text-[28px] font-semibold leading-tight sm:text-[34px]">{view === 'brief' ? 'What developers are struggling with right now' : view === 'opportunities' ? 'Problems existing tools don\'t solve' : view === 'team' ? 'The team\'s view' : VIEWS.find(([k]) => k === view)[1]}</h1>
             <p className="mt-2 max-w-[80ch] text-[13px] text-muted">
               {loadError ? 'The brief could not be loaded.' : !data ? 'Loading your latest brief: fetching the most recent report from the database…'
                 : data.totalThreads === 0 ? 'No report yet. Run the first brief to collect eight weeks of history.'
                 : <>{data.corpus[L]} threads read {W.this} · collected <span className="font-mono">{data.lastRun ? ist(data.lastRun.startedAt) : '–'}</span>{data?.lastRun && <span className={stale ? 'text-alert-ink' : ''}> ({ago(data.lastRun.startedAt)})</span>}</>}
             </p>
-            {data && !loadError && <div className="mt-3"><PlatformStrip platforms={platforms} /></div>}
           </div>
           {data && !empty && (view === 'brief' || view === 'trends') && (
             <Btn onClick={makeReport} disabled={reporting || running} title={`Download a PDF report of ${period?.label || 'this period'}: headline numbers, ranked problems, AI summaries, evidence links, platforms, team vote and how we counted`}>
@@ -1290,7 +1324,7 @@ export default function Dashboard() {
         )}
         {!data && !loadError && <div className="grid grid-cols-2 gap-4 xl:grid-cols-6">{[0, 1, 2, 3, 4, 5].map((i) => <div key={i} className="card h-[170px] animate-pulse" />)}</div>}
 
-        {empty && view !== 'watchlist' && view !== 'system' && <FirstRun onRun={run} running={running} />}
+        {empty && !['watchlist', 'system', 'team'].includes(view) && <FirstRun onRun={run} running={running} />}
 
         {data && !empty && view === 'brief' && (<>
           <KpiRow rows={topPool} data={data} />
@@ -1301,14 +1335,13 @@ export default function Dashboard() {
           </div>
           <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_360px]">
             <TopCalls rows={topPool} mode={mode} setMode={setMode} shortItems={short.items} addShort={addShort} openDraft={(ids) => setDraft({ ids })} focusRow={focusRow} onSummarize={summarize} summarizing={summarizing} />
-            <Shortlist items={short.items} titles={titles} viewer={viewer} setViewer={setViewer} act={shortAct} busy={shortBusy} openDraft={(ids, pack) => setDraft({ ids, pack })} weekNote={period && period.grain !== 'week' && voteWeek ? `Votes belong to the Friday brief for ${range(voteWeek)}.` : null} />
+            <Shortlist items={short.items} titles={titles} viewer={viewer} setViewer={setViewer} act={shortAct} busy={shortBusy} openDraft={(ids, pack) => setDraft({ ids, pack })} weekNote={period && period.grain !== 'week' && voteWeek ? `Votes belong to the Friday brief for ${range(voteWeek)}.` : null} comments={comments} onComment={postComment} onDeleteComment={deleteComment} />
           </div>
           <div className="grid gap-4 xl:grid-cols-2">
             <TopicRings rows={topPool} />
-            <SourceMix rows={topPool} failed={failed} platforms={platforms} />
+            <SourceMix rows={topPool} failed={failed} platforms={platforms} onPick={focusRow} />
           </div>
-          <TalkMap rows={topPool} failed={failed} platforms={platforms} />
-          <Panel n={9} title="How we counted" body="grid gap-4 p-6">
+          <Panel n={8} title="How we counted" body="grid gap-4 p-6">
             <div className="grid grid-cols-2 gap-6 sm:grid-cols-4">
               {[
                 ['Threads read', data.corpus[L].toLocaleString('en-IN'), 'mentioned a tracked keyword', 'var(--cool)'],
@@ -1324,11 +1357,16 @@ export default function Dashboard() {
         </>)}
 
         {data && !empty && view === 'trends' && (<>
-          <TrendChart rows={topPool} weeks={data.weeks} />
-          <ActivityHeatmap rows={topPool} weeks={data.weeks} onPick={focusRow} />
+          <TrendChart key={chart.key} rows={chart.rows} labels={chart.labels} unit={chart.unit} switcher={<GrainSwitch value={chart.grain} onChange={pickGrain} options={grainOptions} busy={altBusy} />} />
+          <ActivityHeatmap rows={chart.rows} labels={chart.labels} unit={chart.unit} onPick={focusRow} />
           <Leaderboard rows={rows} total={data.pains.length} failed={failed} extraIfLooser={extraIfLooser} mode={mode} setMode={setMode} cat={cat} setCat={setCat} srcSel={srcSel} toggleSrc={toggleSrc} sort={sort} setSort={setSort} cmp={cmp} setCmp={setCmp} open={open} setOpen={setOpen} clearFilters={clearFilters} platforms={platforms} shortIds={shortIds} addShort={addShort} openDraft={(ids) => setDraft({ ids })} dismiss={dismiss} hiddenCount={dismissed.length} showHidden={showHidden} setShowHidden={setShowHidden} weeks={data.weeks} />
         </>)}
 
+        {data && !empty && view === 'opportunities' && (
+          <Opportunities rows={topPool} total={data.pains.length} W={W} labels={LABELS} short={short} comments={comments} people={people} candidates={data.candidates}
+            addShort={addShort} openDraft={(ids) => setDraft({ ids })} focusRow={focusRow} />
+        )}
+        {view === 'team' && <Team people={people} rows={topPool} terms={terms} viewer={viewer} setViewer={setViewer} onSave={saveProfile} W={W} focusRow={focusRow} />}
         {view === 'watchlist' && <Watchlist terms={terms} termsError={termsError} reload={loadTerms} toast={toast} candidates={data?.candidates} />}
         {view === 'system' && <SystemView data={data} healthInfo={healthInfo} srcSel={srcSel} toggleSrc={toggleSrc} />}
 
