@@ -1366,7 +1366,7 @@ export default function Dashboard() {
           <Opportunities rows={topPool} total={data.pains.length} W={W} labels={LABELS} short={short} comments={comments} people={people} candidates={data.candidates}
             addShort={addShort} openDraft={(ids) => setDraft({ ids })} focusRow={focusRow} />
         )}
-        {view === 'team' && <Team people={people} rows={topPool} terms={terms} viewer={viewer} setViewer={setViewer} onSave={saveProfile} W={W} focusRow={focusRow} />}
+        {view === 'team' && <Team people={people} rows={topPool} terms={terms} viewer={viewer} setViewer={setViewer} onSave={saveProfile} W={W} focusRow={focusRow} week={voteWeek} toast={toast} />}
         {view === 'watchlist' && <Watchlist terms={terms} termsError={termsError} reload={loadTerms} toast={toast} candidates={data?.candidates} />}
         {view === 'system' && <SystemView data={data} healthInfo={healthInfo} srcSel={srcSel} toggleSrc={toggleSrc} />}
 
