@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { db, ensureSchema, ingest, classify, synthesize, briefData, draftBrief, health, alertIfDown, latestCompleteWeek, emailBrief, lastDelivery, calendarData, backfillHistory, historyStatus } from '../../../lib/server';
+import { db, ensureSchema, ingest, classify, synthesize, briefData, draftBrief, health, alertIfDown, latestCompleteWeek, emailBrief, lastDelivery, emailPreview, saveEmailSettings, deliveryHistory, calendarData, backfillHistory, historyStatus } from '../../../lib/server';
 import { CATS, metaFor } from '../../../lib/painpoints';
 import { TEAM, TEAM_BY_ID, VOTERS, sampleChat } from '../../../lib/team';
 
@@ -31,6 +31,10 @@ export async function GET(req, { params }) {
         return ok(await watchlist());
       case 'delivery':
         return ok(await lastDelivery());
+      case 'email-desk': {
+        const [preview, history] = await Promise.all([emailPreview({ week: url.searchParams.get('week') || undefined, appUrl: new URL('/', req.url).toString() }), deliveryHistory()]);
+        return ok({ ...preview, history });
+      }
       case 'shortlist':
         return ok(await shortlist(url.searchParams.get('week') || latestCompleteWeek()));
       case 'comments':
@@ -90,8 +94,14 @@ export async function POST(req, { params }) {
         return ok(await synthesize(periodOf(body.period || body.week)));
       case 'history':
         return ok(body.status ? await historyStatus() : await backfillHistory());
+      case 'email-preview':
+        return ok(await emailPreview({ week: body.week, opts: body.opts, appUrl: new URL('/', req.url).toString(), sentBy: TEAM_BY_ID[body.by]?.name }));
+      case 'email-settings': {
+        if (!TEAM_BY_ID[body.by]) throw userError('Pick who you are first');
+        return ok(await saveEmailSettings(body.opts, body.by));
+      }
       case 'email': {
-        const r = await emailBrief({ week: body.week, force: true, channel: 'manual', appUrl: new URL('/', req.url).toString() });
+        const r = await emailBrief({ week: body.week, force: true, channel: 'manual', appUrl: new URL('/', req.url).toString(), opts: body.opts, sentBy: TEAM_BY_ID[body.by]?.name });
         return ok(r, r.sent || r.reason ? 200 : 502);
       }
       case 'watchlist':
