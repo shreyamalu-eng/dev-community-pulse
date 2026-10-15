@@ -6,6 +6,7 @@ import { TEAM, GROUPS } from '../lib/team';
 import { CAT_STYLE, TREND, Glyph, PanelLabel } from './instruments';
 import { Btn, chip, ago } from './atoms';
 import { Avatar } from './Discussion';
+import EmailDesk from './EmailDesk';
 
 function Editor({ p, onSave, onCancel }) {
   const [focus, setFocus] = useState(p.focus || '');
@@ -67,7 +68,7 @@ function Person({ p, me, rowsById, termFound, W, onSave, focusRow }) {
   );
 }
 
-export default function Team({ people, rows, terms, viewer, setViewer, onSave, W, focusRow }) {
+export default function Team({ people, rows, terms, viewer, setViewer, onSave, W, focusRow, week, toast }) {
   const [group, setGroup] = useState('all');
   const [q, setQ] = useState('');
   const list = people?.length ? people : TEAM;
@@ -139,6 +140,8 @@ export default function Team({ people, rows, terms, viewer, setViewer, onSave, W
           {shown.map((p) => <Person key={p.id} p={p} me={p.id === viewer} rowsById={rowsById} termFound={termFound} W={W} onSave={onSave} focusRow={focusRow} />)}
         </div>
       </section>
+
+      <EmailDesk viewer={viewer} week={week} pains={rows.map((r) => ({ id: r.p.id, title: r.p.title }))} toast={toast} />
     </div>
   );
 }
